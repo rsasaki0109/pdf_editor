@@ -3,6 +3,7 @@ import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument } from 'pdf-lib';
 import { movePage, exportPdf } from './model.js';
+import { saveProject, readProject, MAX_PROJECT_BYTES } from './project.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const $ = id => document.getElementById(id);
 const sources = new Map();
@@ -20,6 +21,9 @@ function controls(refreshPreview = true) {
   }
   $('save').disabled = busy || !pages.length;
   $('files').disabled = busy;
+  $('save-project').disabled = busy || !pages.length;
+  $('open-project').disabled = busy;
+  $('project-file').disabled = busy;
   for (const id of ['rotate','remove','addtext','cleartext','expand']) $(id).disabled = busy || !page;
   $('left').disabled = busy || index <= 0;
   $('right').disabled = busy || index < 0 || index >= pages.length - 1;
@@ -55,7 +59,7 @@ async function render() {
     canvas.width = Math.ceil(drawing.width); canvas.height = Math.ceil(drawing.height);
     const meta = document.createElement('div'); meta.className = 'card-meta'; meta.textContent = `${String(index+1).padStart(2,'0')}`;
     const name = document.createElement('span'); name.textContent = source.name; meta.append(name); card.append(sheet,meta); $('pages').append(card);
-    card.onclick = () => { selected = item.id; document.querySelectorAll('.card').forEach(c => c.classList.remove('active')); card.classList.add('active'); controls(); };
+    card.onclick = () => { if (busy) return; selected = item.id; document.querySelectorAll('.card').forEach(c => c.classList.remove('active')); card.classList.add('active'); controls(); };
     card.onkeydown = event => { if (event.target !== card) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); } };
     card.ondragstart = event => { if (busy) return event.preventDefault(); event.dataTransfer.setData('text/plain',item.id); };
     card.ondragover = event => event.preventDefault();
@@ -195,7 +199,7 @@ async function addFiles(files) {
       const doc = await PDFDocument.load(bytes);
       const pdf = await pdfjs.getDocument({data:bytes.slice(),isEvalSupported:false}).promise;
       const id = crypto.randomUUID(); sources.set(id,{bytes,pdf,name:file.name});
-      doc.getPages().forEach((page,index) => pending.push({id:crypto.randomUUID(),sourceId:id,index,rotation:page.getRotation().angle,texts:[]})); added++;
+      doc.getPages().forEach((page,index) => pending.push({id:crypto.randomUUID(),sourceId:id,index,rotation:((page.getRotation().angle%360)+360)%360,texts:[]})); added++;
     } catch { errors.push(file.name); }
   }
   if (pending.length) { remember(); pages.push(...pending); selected = pending[0].id; }
@@ -213,13 +217,60 @@ $('remove').onclick = () => { if (busy) return; remember(); const index=pages.fi
 $('undo').onclick = () => { if (busy) return; const previous=history.pop(); if (previous) { pages=previous.pages; selected=previous.selected; selectedText=previous.selectedText; movingText=false; placing=false; message('直前の操作を元に戻しました。'); render(); } };
 $('addtext').onclick = () => { togglePlacing(); if (placing) message('ページ上をクリックしてテキストを配置してください。'); };
 $('cleartext').onclick = () => { if (busy || !current()) return; remember(); current().texts=[]; render(); };
+
+function downloadFile(blob, name) {
+  const url = URL.createObjectURL(blob), link = document.createElement('a');
+  link.href=url; link.download=name; link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+$('save-project').onclick = () => {
+  if (busy || !pages.length) return;
+  try {
+    const json = saveProject(pages,sources,selected);
+    const blob = new Blob([json],{type:'application/json'});
+    if (blob.size > MAX_PROJECT_BYTES) throw new Error('作業ファイルは100MB以下にしてください。');
+    downloadFile(blob,'document.pdfstudio'); message('作業ファイルを保存しました。あとから開いて再編集できます。');
+  } catch (error) { message(`作業を保存できませんでした: ${error.message}`); }
+};
+$('open-project').onclick = () => $('project-file').click();
+$('project-file').onchange = async event => {
+  const file=event.target.files[0];
+  if (!file || busy) return;
+  if (pages.length && !window.confirm('現在の作業を読み込む作業ファイルに切り替えます。必要なら先に作業ファイルを保存してください。切り替え後も「元に戻す」で戻せます。')) { event.target.value=''; return; }
+  busy=true; controls(); message('作業ファイルを開いています…',true);
+  const staged=new Map();
+  let installed=false;
+  try {
+    if (file.size > MAX_PROJECT_BYTES) throw new Error('作業ファイルは100MB以下にしてください。');
+    const project=readProject(await file.text()), sourceIds=new Map();
+    for (const [oldId, source] of project.sources) {
+      const doc=await PDFDocument.load(source.bytes);
+      if (project.pages.some(page=>page.sourceId===oldId && page.index>=doc.getPageCount())) throw new Error('存在しないページが指定されています。');
+      const pdf=await pdfjs.getDocument({data:source.bytes.slice(),isEvalSupported:false}).promise;
+      const newId=crypto.randomUUID(); sourceIds.set(oldId,newId); staged.set(newId,{...source,pdf});
+    }
+    let restoredSelection;
+    const restoredPages=project.pages.map(page=>{
+      const id=crypto.randomUUID(); if (page.id===project.selected) restoredSelection=id;
+      return {...page,id,sourceId:sourceIds.get(page.sourceId),texts:page.texts.map(text=>({...text,id:crypto.randomUUID()}))};
+    });
+    remember(); for (const [id,source] of staged) sources.set(id,source);
+    pages=restoredPages; selected=restoredSelection; selectedText=null; placing=false; movingText=false; installed=true;
+    message('作業を復元しました。続けて編集できます。');
+  } catch(error) { message(`作業を開けませんでした: ${error.message}`); }
+  finally {
+    if (!installed) for (const source of staged.values()) await source.pdf.destroy();
+    busy=false; event.target.value=''; await render();
+  }
+};
+
 $('save').onclick = async () => {
   if (busy || !pages.length) return; busy=true; controls(); message('PDFを書き出しています…',true);
   try {
     let fontBytes;
     if (pages.some(p=>p.texts.length)) { const response=await fetch(`${import.meta.env.BASE_URL}fonts/NotoSansJP-Regular.otf`); if (!response.ok) throw new Error('日本語フォントを読み込めません。'); fontBytes=await response.arrayBuffer(); }
-    const bytes=await exportPdf(pages,sources,fontBytes); const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
-    const a=document.createElement('a'); a.href=url; a.download='edited-document.pdf'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),60000); message('PDFを書き出しました。');
+    const bytes=await exportPdf(pages,sources,fontBytes);
+    downloadFile(new Blob([bytes],{type:'application/pdf'}),'edited-document.pdf'); message('PDFを書き出しました。');
   } catch(error) { message(`書き出せませんでした: ${error.message}`); }
   finally { busy=false; controls(); }
 };
