@@ -7,6 +7,19 @@ export function movePage(pages, index, delta) {
   [next[index], next[target]] = [next[target], next[index]];
   return next;
 }
+// Copies keep their source PDF, while page and annotation identities stay independent.
+export function duplicatePages(pages, ids) {
+  const copies = [], output = [];
+  for (const page of pages) {
+    output.push(page);
+    if (!ids.has(page.id)) continue;
+    const copy = structuredClone(page);
+    copy.id = crypto.randomUUID();
+    copy.texts = copy.texts.map(text => ({ ...text, id: crypto.randomUUID() }));
+    copies.push(copy); output.push(copy);
+  }
+  return { pages: output, copies };
+}
 export async function exportPdf(pages, sources, fontBytes) {
   if (!pages.length) throw new Error('ページを追加してください。');
   const output = await PDFDocument.create();

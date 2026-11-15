@@ -1,8 +1,8 @@
 import './style.css';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { PDFDocument } from 'pdf-lib';
-import { movePage, exportPdf } from './model.js';
+import { PDFDocument, PageSizes } from 'pdf-lib';
+import { movePage, exportPdf, duplicatePages } from './model.js';
 import { saveProject, readProject, MAX_PROJECT_BYTES } from './project.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const $ = id => document.getElementById(id);
@@ -27,14 +27,15 @@ function controls(refreshPreview = true) {
   $('select-all').disabled=busy || !pages.length;
   $('select-all').checked=pages.length>0 && checkedPages.size===pages.length;
   $('select-all').indeterminate=checkedPages.size>0 && checkedPages.size<pages.length;
-  for (const id of ['bulk-clear','bulk-rotate','bulk-delete','bulk-export']) $(id).disabled=busy || !checkedPages.size;
+  for (const id of ['bulk-clear','bulk-rotate','bulk-delete','bulk-export','bulk-duplicate']) $(id).disabled=busy || !checkedPages.size;
   document.querySelectorAll('.page-check').forEach(input=>{input.disabled=busy;input.checked=checkedPages.has(input.value);input.closest('.card').classList.toggle('checked-card',input.checked);});
   $('save').disabled = busy || !pages.length;
   $('files').disabled = busy;
+  $('add-blank').disabled = busy;
   $('save-project').disabled = busy || !pages.length;
   $('open-project').disabled = busy;
   $('project-file').disabled = busy;
-  for (const id of ['rotate','remove','addtext','cleartext','expand']) $(id).disabled = busy || !page;
+  for (const id of ['rotate','remove','addtext','cleartext','expand','duplicate']) $(id).disabled = busy || !page;
   $('left').disabled = busy || index <= 0;
   $('right').disabled = busy || index < 0 || index >= pages.length - 1;
   $('cleartext').disabled = busy || !page?.texts.length;
@@ -227,6 +228,31 @@ async function addFiles(files) {
   busy = false; $('files').value = ''; await render();
   message(`${added ? `${added} 件のPDFを追加しました。` : ''}${errors.length ? ` 読み込めません: ${errors.join('、')}（破損・暗号化されたPDFには対応していません）` : ''}`);
 }
+$('add-blank').onclick = async () => {
+  if (busy) return;
+  busy=true; controls();
+  try {
+    const doc=await PDFDocument.create(); doc.addPage(PageSizes.A4);
+    const bytes=await doc.save(), id=crypto.randomUUID();
+    const pdf=await pdfjs.getDocument({data:bytes.slice(),isEvalSupported:false}).promise;
+    remember(); sources.set(id,{bytes,pdf,name:'白紙（A4）.pdf'});
+    const page={id:crypto.randomUUID(),sourceId:id,index:0,rotation:0,texts:[]};
+    const index=pages.findIndex(item=>item.id===selected);
+    pages.splice(index<0?pages.length:index+1,0,page);selected=page.id;selectedText=null;placing=false;movingText=false;
+    message('A4白紙ページを追加しました。');
+  } catch(error) { message(`白紙を追加できませんでした: ${error.message}`); }
+  finally { busy=false;await render(); }
+};
+function duplicateSelection(ids, bulk=false) {
+  if (busy) return;
+  const result=duplicatePages(pages,ids);
+  if (!result.copies.length) return;
+  remember(); pages=result.pages;selected=result.copies[0].id;selectedText=null;placing=false;movingText=false;
+  checkedPages=bulk ? new Set(result.copies.map(page=>page.id)) : new Set();
+  message(`${result.copies.length}ページを複製しました。`);render();
+}
+$('duplicate').onclick=()=>duplicateSelection(new Set([selected]));
+$('bulk-duplicate').onclick=()=>duplicateSelection(checkedPages,true);
 $('files').onchange = event => addFiles([...event.target.files]);
 for (const type of ['dragover','drop']) document.addEventListener(type,event => { if (event.dataTransfer?.types.includes('Files')) event.preventDefault(); });
 $('drop').ondragover = event => { event.preventDefault(); $('drop').classList.add('drag'); };

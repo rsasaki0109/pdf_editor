@@ -24,3 +24,15 @@ test('out of bounds moves leave order intact; empty export is rejected', async (
   assert.deepEqual(movePage(pages,1,1),pages);
   await assert.rejects(exportPdf([],new Map()),/ページ/);
 });
+test('duplicated pages retain order and rotation; edits never mutate originals', async () => {
+  const { duplicatePages } = await import('../src/model.js');
+  const original={id:'original',sourceId:'pdf',index:0,rotation:90,texts:[{id:'note',text:'原本',x:10,y:20,size:18,color:'#123456',rotation:0}]};
+  const last={id:'last',sourceId:'pdf',index:1,rotation:0,texts:[]};
+  const result=duplicatePages([original,last],new Set(['original','last']));
+  assert.equal(result.pages.length,4);assert.equal(result.copies.length,2);
+  assert.equal(result.pages[0],original);assert.equal(result.pages[2],last);
+  const copy=result.copies[0];assert.notEqual(copy.id,original.id);assert.notEqual(copy.texts[0].id,original.texts[0].id);
+  assert.equal(copy.rotation,90);assert.equal(copy.sourceId,'pdf');
+  copy.texts[0].text='コピー';copy.rotation=180;
+  assert.equal(original.texts[0].text,'原本');assert.equal(original.rotation,90);
+});
