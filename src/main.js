@@ -3,6 +3,7 @@ import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, PageSizes } from 'pdf-lib';
 import { movePage, exportPdf, duplicatePages } from './model.js';
+import { parsePageRange } from './page-range.js';
 import { saveProject, readProject, MAX_PROJECT_BYTES } from './project.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const $ = id => document.getElementById(id);
@@ -25,6 +26,9 @@ function controls(refreshPreview = true) {
   $('bulk-tools').hidden=!pages.length;
   $('bulk-count').textContent=`${checkedPages.size}ページ選択`;
   $('select-all').disabled=busy || !pages.length;
+  $('page-range').disabled=busy || !pages.length;
+  $('range-apply').disabled=busy || !pages.length;
+  $('range-hint').textContent=`現在の一覧の1〜${pages.length}ページを指定`;
   $('select-all').checked=pages.length>0 && checkedPages.size===pages.length;
   $('select-all').indeterminate=checkedPages.size>0 && checkedPages.size<pages.length;
   for (const id of ['bulk-clear','bulk-rotate','bulk-delete','bulk-export','bulk-duplicate']) $(id).disabled=busy || !checkedPages.size;
@@ -345,6 +349,18 @@ async function writePdf(exportPages, filename) {
 };
 $('save').onclick=()=>writePdf(pages,'edited-document.pdf');
 $('bulk-export').onclick=()=>writePdf(pages.filter(page=>checkedPages.has(page.id)),'selected-pages.pdf');
+$('range-form').onsubmit=event=>{
+  event.preventDefault();if (busy || !pages.length) return;
+  try {
+    const indices=parsePageRange($('page-range').value,pages.length);
+    checkedPages=new Set(indices.map(index=>pages[index].id));
+    $('range-error').textContent='';$('page-range').removeAttribute('aria-invalid');
+    controls(false);message(`${checkedPages.size}ページを選択しました。`);
+  } catch(error) {
+    $('range-error').textContent=error.message;$('page-range').setAttribute('aria-invalid','true');
+  }
+};
+$('page-range').oninput=()=>{$('range-error').textContent='';$('page-range').removeAttribute('aria-invalid');};
 $('select-all').onchange=()=>{if (busy) return; checkedPages=$('select-all').checked ? new Set(pages.map(page=>page.id)) : new Set();controls(false);};
 $('bulk-clear').onclick=()=>{if (busy) return;checkedPages.clear();controls(false);};
 $('bulk-rotate').onclick=()=>{
