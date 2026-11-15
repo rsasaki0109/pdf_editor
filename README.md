@@ -38,7 +38,9 @@ npm run build
 npm run test:e2e
 ```
 
-既存のChromiumを使う場合は `PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium npm run test:e2e` を実行します。PC幅とスマホ幅で、編集・複製・一括操作・履歴・作業復元を確認します。日本語PDFはPDF.jsとPopplerの描画を基準画像と比較し、Popplerの警告と文字抽出もチェックします。失敗時の画像・トレースは `test-results/` に残ります。
+画像比較の基準は `package-lock.json` に対応するPlaywright管理版Chromiumで作成しています。基準画像を更新する前に、必ず出力文字を目視してください。
+
+既存のChromiumを使う場合は `PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium npm run test:e2e` を実行します（版が違うと画像比較に差が出る場合があります）。PC幅とスマホ幅で、編集・複製・一括操作・履歴・作業復元を確認します。日本語PDFはPDF.jsとPopplerの描画を基準画像と比較し、Popplerの警告と文字抽出もチェックします。失敗時の画像・トレースは `test-results/` に残ります。
 
 デモGIFは `npm run build` 後に `node scripts/record-demo.mjs` で更新できます（Chromiumとffmpegが必要）。
 
