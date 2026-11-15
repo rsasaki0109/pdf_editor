@@ -7,11 +7,12 @@ import { saveProject, readProject, MAX_PROJECT_BYTES } from './project.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const $ = id => document.getElementById(id);
 const sources = new Map();
-let pages = [], selected = null, history = [], placing = false, busy = false, renderVersion = 0, selectedText = null, movingText = false;
+let pages = [], selected = null, history = [], future = [], placing = false, busy = false, renderVersion = 0, selectedText = null, movingText = false;
 const clone = value => structuredClone(value);
 let messageTimer;
 function message(value, persistent = false) { clearTimeout(messageTimer); $('status').textContent = value; $('preview-status').textContent = $('preview').open ? value : ''; if (!persistent) messageTimer = setTimeout(() => { $('status').textContent = ''; $('preview-status').textContent = ''; }, 5500); }
-function remember() { history.push({ pages: clone(pages), selected, selectedText }); if (history.length > 30) history.shift(); }
+function snapshot() { return { pages: clone(pages), selected, selectedText }; }
+function remember() { history.push(snapshot()); if (history.length > 30) history.shift(); future = []; }
 function current() { return pages.find(p => p.id === selected); }
 function controls(refreshPreview = true) {
   const index = pages.findIndex(p => p.id === selected), page = current();
@@ -29,6 +30,7 @@ function controls(refreshPreview = true) {
   $('right').disabled = busy || index < 0 || index >= pages.length - 1;
   $('cleartext').disabled = busy || !page?.texts.length;
   $('undo').disabled = busy || !history.length;
+  $('redo').disabled = busy || !future.length;
   $('selected').textContent = page ? `${index + 1} ページ目` : 'ページを選択';
   $('count').textContent = pages.length ? `ページ一覧 · ${pages.length}` : 'ページ一覧';
   $('toolhint').textContent = movingText ? 'ページ上をクリックして選択した文字を移動' : placing ? 'ページ上をクリックして文字を配置' : pages.length ? 'ドラッグで並べ替え · クリックで選択' : 'PDFを追加して編集をはじめましょう';
@@ -152,6 +154,7 @@ async function renderPreview() {
   $('preview-prev').disabled = busy || index === 0;
   $('preview-next').disabled = busy || index === pages.length-1;
   $('preview-undo').disabled = busy || !history.length;
+  $('preview-redo').disabled = busy || !future.length;
   $('preview-place').disabled = busy;
   $('preview-place').textContent = placing ? '配置モードを終了' : '＋ 配置モードにする';
   $('preview-stage').classList.toggle('placing', placing);
@@ -184,6 +187,7 @@ $('preview').addEventListener('close', () => {
 $('preview-zoom').onchange = renderPreview;
 $('preview-place').onclick = togglePlacing;
 $('preview-undo').onclick = () => $('undo').click();
+$('preview-redo').onclick = () => $('redo').click();
 for (const [id, delta] of [['preview-prev',-1],['preview-next',1]]) $(id).onclick = () => {
   const item = pages[pages.findIndex(p=>p.id===selected)+delta];
   if (item && !busy) { selected = item.id; render(); }
@@ -214,7 +218,29 @@ $('drop').ondrop = event => { event.preventDefault(); $('drop').classList.remove
 for (const [id,delta] of [['left',-1],['right',1]]) $(id).onclick = () => { if (busy) return; remember(); pages = movePage(pages,pages.findIndex(p=>p.id===selected),delta); render(); };
 $('rotate').onclick = () => { const page=current(); if (!page || busy) return; remember(); for (const t of page.texts) t.rotation ??= page.rotation; page.rotation=(page.rotation+90)%360; render(); };
 $('remove').onclick = () => { if (busy) return; remember(); const index=pages.findIndex(p=>p.id===selected); pages.splice(index,1); selected=pages[Math.min(index,pages.length-1)]?.id??null; render(); };
-$('undo').onclick = () => { if (busy) return; const previous=history.pop(); if (previous) { pages=previous.pages; selected=previous.selected; selectedText=previous.selectedText; movingText=false; placing=false; message('直前の操作を元に戻しました。'); render(); } };
+function restoreSnapshot(state) {
+  pages=state.pages; selected=state.selected; selectedText=state.selectedText; movingText=false; placing=false;
+  const annotation=current()?.texts.find(text=>text.id===selectedText);
+  if (annotation) for (const prefix of ['', 'preview-']) for (const key of ['text','size','color']) $(prefix+key).value=annotation[key];
+  render();
+}
+$('undo').onclick = () => {
+  if (busy || !history.length) return;
+  future.push(snapshot()); restoreSnapshot(history.pop()); message('直前の操作を元に戻しました。');
+};
+$('redo').onclick = () => {
+  if (busy || !future.length) return;
+  history.push(snapshot()); restoreSnapshot(future.pop()); message('操作をやり直しました。');
+};
+document.addEventListener('keydown', event => {
+  if (event.defaultPrevented || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
+  const target=event.target;
+  if (target instanceof Element && target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"])')) return;
+  const key=event.key.toLowerCase();
+  const action=key==='z' ? (event.shiftKey ? 'redo' : 'undo') : key==='y' && !event.shiftKey ? 'redo' : null;
+  if (!action) return;
+  event.preventDefault(); $(action).click();
+});
 $('addtext').onclick = () => { togglePlacing(); if (placing) message('ページ上をクリックしてテキストを配置してください。'); };
 $('cleartext').onclick = () => { if (busy || !current()) return; remember(); current().texts=[]; render(); };
 
