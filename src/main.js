@@ -3,6 +3,7 @@ import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, PageSizes } from 'pdf-lib';
 import { movePage, exportPdf, duplicatePages } from './model.js';
+import { outputFilename } from './filename.js';
 import { parsePageRange } from './page-range.js';
 import { saveProject, readProject, MAX_PROJECT_BYTES } from './project.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -34,6 +35,7 @@ function controls(refreshPreview = true) {
   for (const id of ['bulk-clear','bulk-rotate','bulk-delete','bulk-export','bulk-duplicate']) $(id).disabled=busy || !checkedPages.size;
   document.querySelectorAll('.page-check').forEach(input=>{input.disabled=busy;input.checked=checkedPages.has(input.value);input.closest('.card').classList.toggle('checked-card',input.checked);});
   $('save').disabled = busy || !pages.length;
+  $('output-name').disabled=busy;
   $('files').disabled = busy;
   $('add-blank').disabled = busy;
   $('save-project').disabled = busy || !pages.length;
@@ -302,7 +304,7 @@ $('save-project').onclick = () => {
     const json = saveProject(pages,sources,selected);
     const blob = new Blob([json],{type:'application/json'});
     if (blob.size > MAX_PROJECT_BYTES) throw new Error('作業ファイルは100MB以下にしてください。');
-    downloadFile(blob,'document.pdfstudio'); message('作業ファイルを保存しました。あとから開いて再編集できます。');
+    downloadFile(blob,outputFilename($('output-name').value,'pdfstudio')); message('作業ファイルを保存しました。あとから開いて再編集できます。');
   } catch (error) { message(`作業を保存できませんでした: ${error.message}`); }
 };
 $('open-project').onclick = () => $('project-file').click();
@@ -347,8 +349,9 @@ async function writePdf(exportPages, filename) {
   } catch(error) { message(`書き出せませんでした: ${error.message}`); }
   finally { busy=false; controls(); }
 };
-$('save').onclick=()=>writePdf(pages,'edited-document.pdf');
-$('bulk-export').onclick=()=>writePdf(pages.filter(page=>checkedPages.has(page.id)),'selected-pages.pdf');
+$('output-name').oninput=()=>{$('output-name-hint').textContent=outputFilename($('output-name').value,'pdf');};
+$('save').onclick=()=>writePdf(pages,outputFilename($('output-name').value,'pdf'));
+$('bulk-export').onclick=()=>writePdf(pages.filter(page=>checkedPages.has(page.id)),outputFilename($('output-name').value,'pdf',true));
 $('range-form').onsubmit=event=>{
   event.preventDefault();if (busy || !pages.length) return;
   try {
