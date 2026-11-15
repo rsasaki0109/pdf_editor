@@ -9,14 +9,14 @@ const sources = new Map();
 let pages = [], selected = null, history = [], placing = false, busy = false, renderVersion = 0;
 const clone = value => structuredClone(value);
 let messageTimer;
-function message(value, persistent = false) { clearTimeout(messageTimer); $('status').textContent = value; if (!persistent) messageTimer = setTimeout(() => $('status').textContent = '', 5500); }
+function message(value, persistent = false) { clearTimeout(messageTimer); $('status').textContent = value; $('preview-status').textContent = $('preview').open ? value : ''; if (!persistent) messageTimer = setTimeout(() => $('status').textContent = '', 5500); }
 function remember() { history.push({ pages: clone(pages), selected }); if (history.length > 30) history.shift(); }
 function current() { return pages.find(p => p.id === selected); }
 function controls() {
   const index = pages.findIndex(p => p.id === selected), page = current();
   $('save').disabled = busy || !pages.length;
   $('files').disabled = busy;
-  for (const id of ['rotate','remove','addtext','cleartext']) $(id).disabled = busy || !page;
+  for (const id of ['rotate','remove','addtext','cleartext','expand']) $(id).disabled = busy || !page;
   $('left').disabled = busy || index <= 0;
   $('right').disabled = busy || index < 0 || index >= pages.length - 1;
   $('cleartext').disabled = busy || !page?.texts.length;
@@ -27,6 +27,7 @@ function controls() {
   $('drop').hidden = !!pages.length;
   $('pages').classList.toggle('placing', placing);
   $('addtext').textContent = placing ? '配置モードを終了' : '＋ 配置モードにする';
+  if ($('preview').open) renderPreview();
 }
 async function render() {
   const version = ++renderVersion;
@@ -57,25 +58,78 @@ async function render() {
     card.ondrop = event => { event.preventDefault(); event.stopPropagation(); if (busy) return; const from = pages.findIndex(p => p.id === event.dataTransfer.getData('text/plain')); const to = pages.findIndex(p => p.id === item.id); if (from < 0 || from === to) return; remember(); const [moved] = pages.splice(from,1); pages.splice(to,0,moved); render(); };
     sheet.onclick = event => {
       if (!placing || busy) return;
-      event.stopPropagation(); const text = $('text').value.trim(), size = Number($('size').value);
-      if (!text || !Number.isFinite(size) || size < 6 || size > 96) return message('テキストと6〜96の文字サイズを入力してください。');
-      const rect = sheet.getBoundingClientRect();
-      const [x,y] = viewport.convertToPdfPoint((event.clientX-rect.left)/rect.width*viewport.width,(event.clientY-rect.top)/rect.height*viewport.height);
-      remember(); item.texts.push({text,x,y,size,color:$('color').value}); selected = item.id; render();
+      event.stopPropagation(); placeText(event, sheet, viewport, item);
     };
-    for (const text of item.texts) {
-      const [x,y] = viewport.convertToViewportPoint(text.x,text.y);
-      const label = document.createElement('span'); label.className = 'annotation'; label.textContent = text.text;
-      label.style.left = `${x/viewport.width*100}%`; label.style.top = `${y/viewport.height*100}%`;
-      // Use a container-relative font size so the preview scales with page width.
-      sheet.style.containerType = 'inline-size'; label.style.fontSize = `${text.size/viewport.width*100}cqw`; label.style.color = text.color;
-      const relativeRotation = ((item.rotation - (text.rotation ?? item.rotation)) + 360) % 360;
-      label.style.rotate = `${relativeRotation}deg`; sheet.append(label);
-    }
+    addAnnotations(sheet, viewport, item);
     try { await pdfPage.render({canvasContext:canvas.getContext('2d'),viewport:drawing}).promise; }
     catch(error) { if (version === renderVersion) message(`プレビューに失敗しました: ${error.message}`); }
   }
 }
+
+function addAnnotations(sheet, viewport, item) {
+  sheet.style.containerType = 'inline-size';
+  for (const text of item.texts) {
+    const [x,y] = viewport.convertToViewportPoint(text.x,text.y);
+    const label = document.createElement('span'); label.className = 'annotation'; label.textContent = text.text;
+    label.style.left = `${x/viewport.width*100}%`; label.style.top = `${y/viewport.height*100}%`;
+    label.style.fontSize = `${text.size/viewport.width*100}cqw`; label.style.color = text.color;
+    label.style.rotate = `${((item.rotation - (text.rotation ?? item.rotation)) + 360) % 360}deg`;
+    sheet.append(label);
+  }
+}
+function placeText(event, sheet, viewport, item, prefix = '') {
+  const text = $(prefix+'text').value.trim(), size = Number($(prefix+'size').value);
+  if (!text || !Number.isFinite(size) || size < 6 || size > 96) return message('テキストと6〜96の文字サイズを入力してください。');
+  const rect = sheet.getBoundingClientRect();
+  const [x,y] = viewport.convertToPdfPoint((event.clientX-rect.left)/rect.width*viewport.width,(event.clientY-rect.top)/rect.height*viewport.height);
+  remember(); item.texts.push({text,x,y,size,color:$(prefix+'color').value,rotation:item.rotation}); selected = item.id; render();
+}
+let previewVersion = 0;
+async function renderPreview() {
+  const version = ++previewVersion, item = current();
+  if (!item) { $('preview').close(); return; }
+  const index = pages.indexOf(item);
+  $('preview-page').textContent = `${index+1} / ${pages.length}`;
+  $('preview-prev').disabled = busy || index === 0;
+  $('preview-next').disabled = busy || index === pages.length-1;
+  $('preview-undo').disabled = busy || !history.length;
+  $('preview-place').disabled = busy;
+  $('preview-place').textContent = placing ? '配置モードを終了' : '＋ 配置モードにする';
+  $('preview-stage').classList.toggle('placing', placing);
+  try {
+    const pdfPage = await sources.get(item.sourceId).pdf.getPage(item.index+1);
+    if (version !== previewVersion || !$('preview').open) return;
+    const viewport = pdfPage.getViewport({scale:1,rotation:item.rotation});
+    const zoom = Number($('preview-zoom').value);
+    const width = Math.min(760, Math.max(200, $('preview-stage').clientWidth-48)) * zoom;
+    const drawing = pdfPage.getViewport({scale:Math.min(2,window.devicePixelRatio||1)*width/viewport.width,rotation:item.rotation});
+    const sheet = document.createElement('div'); sheet.className = 'sheet'; sheet.style.width = `${width}px`;
+    const canvas = document.createElement('canvas'); canvas.width = Math.ceil(drawing.width); canvas.height = Math.ceil(drawing.height); sheet.append(canvas);
+    addAnnotations(sheet, viewport, item);
+    sheet.onclick = event => { if (placing && !busy) placeText(event,sheet,viewport,item,'preview-'); };
+    $('preview-stage').replaceChildren(sheet);
+    await pdfPage.render({canvasContext:canvas.getContext('2d'),viewport:drawing}).promise;
+  } catch (error) { if (version === previewVersion) message(`拡大表示に失敗しました: ${error.message}`); }
+}
+$('expand').onclick = () => {
+  if (!current() || busy) return;
+  for (const id of ['text','size','color']) $('preview-'+id).value = $(id).value;
+  $('preview-status').textContent = ''; $('preview').showModal(); renderPreview();
+};
+$('preview-close').onclick = () => $('preview').close();
+$('preview').addEventListener('close', () => {
+  previewVersion++;
+  for (const id of ['text','size','color']) $(id).value = $('preview-'+id).value;
+  placing = false; controls();
+});
+$('preview-zoom').onchange = renderPreview;
+$('preview-place').onclick = () => { placing = !placing; controls(); };
+$('preview-undo').onclick = () => $('undo').click();
+for (const [id, delta] of [['preview-prev',-1],['preview-next',1]]) $(id).onclick = () => {
+  const item = pages[pages.findIndex(p=>p.id===selected)+delta];
+  if (item && !busy) { selected = item.id; render(); }
+};
+
 async function addFiles(files) {
   if (busy || !files.length) return;
   busy = true; controls(); message('PDFを読み込んでいます…',true);
