@@ -25,6 +25,7 @@ function controls(refreshPreview = true) {
   const pageIds=new Set(pages.map(p=>p.id));
   checkedPages=new Set([...checkedPages].filter(id=>pageIds.has(id)));
   $('bulk-tools').hidden=!pages.length;
+  if (checkedPages.size) $('bulk-tools').open=true;
   $('bulk-count').textContent=`${checkedPages.size}ページ選択`;
   $('select-all').disabled=busy || !pages.length;
   $('page-range').disabled=busy || !pages.length;
@@ -95,7 +96,7 @@ async function render() {
       event.stopPropagation(); placeText(event, sheet, viewport, item);
     };
     addAnnotations(sheet, viewport, item);
-    try { await pdfPage.render({canvasContext:canvas.getContext('2d'),viewport:drawing}).promise; }
+    try { await pdfPage.render({canvasContext:canvas.getContext('2d'),viewport:drawing}).promise; canvas.dataset.rendered='true'; }
     catch(error) { if (version === renderVersion) message(`プレビューに失敗しました: ${error.message}`); }
   }
 }
@@ -133,6 +134,7 @@ function placeText(event, sheet, viewport, item, prefix = '') {
 }
 
 function selectText(item, text) {
+  if (!$('preview').open) activateInspector('text');
   if (busy) return;
   selected = item.id; selectedText = text.id; movingText = false; placing = false;
   for (const prefix of ['', 'preview-']) {
@@ -169,6 +171,22 @@ function togglePlacing() {
   controls();
 }
 
+function activateInspector(tab) {
+  for (const name of ['page','text']) {
+    const active=name===tab;
+    $('tab-'+name).setAttribute('aria-selected',String(active));
+    $('tab-'+name).tabIndex=active?0:-1;
+    $('panel-'+name).hidden=!active;
+  }
+}
+for (const name of ['page','text']) {
+  $('tab-'+name).onclick=()=>activateInspector(name);
+  $('tab-'+name).onkeydown=event=>{
+    if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+    event.preventDefault();const next=event.key==='Home'?'page':event.key==='End'?'text':name==='page'?'text':'page';
+    activateInspector(next);$('tab-'+next).focus();
+  };
+}
 let previewVersion = 0;
 async function renderPreview() {
   const version = ++previewVersion, item = current();
@@ -194,7 +212,7 @@ async function renderPreview() {
     addAnnotations(sheet, viewport, item);
     sheet.onclick = event => { if (placing && !busy) placeText(event,sheet,viewport,item,'preview-'); };
     $('preview-stage').replaceChildren(sheet);
-    await pdfPage.render({canvasContext:canvas.getContext('2d'),viewport:drawing}).promise;
+    await pdfPage.render({canvasContext:canvas.getContext('2d'),viewport:drawing}).promise; canvas.dataset.rendered='true';
   } catch (error) { if (version === previewVersion) message(`拡大表示に失敗しました: ${error.message}`); }
 }
 $('expand').onclick = () => {
@@ -343,7 +361,7 @@ async function writePdf(exportPages, filename) {
   if (busy || !exportPages.length) return; busy=true; controls(); message('PDFを書き出しています…',true);
   try {
     let fontBytes;
-    if (exportPages.some(p=>p.texts.length)) { const response=await fetch(`${import.meta.env.BASE_URL}fonts/NotoSansJP-Regular.otf`); if (!response.ok) throw new Error('日本語フォントを読み込めません。'); fontBytes=await response.arrayBuffer(); }
+    if (exportPages.some(p=>p.texts.length)) { const response=await fetch(`${import.meta.env.BASE_URL}fonts/NotoSansJP-Regular.ttf`); if (!response.ok) throw new Error('日本語フォントを読み込めません。'); fontBytes=await response.arrayBuffer(); }
     const bytes=await exportPdf(exportPages,sources,fontBytes);
     downloadFile(new Blob([bytes],{type:'application/pdf'}),filename); message('PDFを書き出しました。');
   } catch(error) { message(`書き出せませんでした: ${error.message}`); }

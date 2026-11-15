@@ -10,7 +10,7 @@ test('merge, reorder, delete, rotation and Japanese text survive export', async 
   let pages=[{sourceId:'a',index:0,rotation:0,texts:[]},{sourceId:'a',index:1,rotation:90,texts:[]},{sourceId:'b',index:0,rotation:0,texts:[]}];
   pages=movePage(pages,2,-1); pages.splice(0,1);
   pages[0].texts.push({text:'日本語のテスト',x:20,y:50,size:18,color:'#123456'});
-  const result=await exportPdf(pages,sources,await readFile(new URL('../public/fonts/NotoSansJP-Regular.otf',import.meta.url)));
+  const result=await exportPdf(pages,sources,await readFile(new URL('../public/fonts/NotoSansJP-Regular.ttf',import.meta.url)));
   const doc=await PDFDocument.load(result);
   assert.equal(doc.getPageCount(),2);
   assert.equal(doc.getPage(0).getWidth(),200);
