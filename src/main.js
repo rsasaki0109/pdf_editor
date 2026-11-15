@@ -6,14 +6,18 @@ import { movePage, exportPdf } from './model.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const $ = id => document.getElementById(id);
 const sources = new Map();
-let pages = [], selected = null, history = [], placing = false, busy = false, renderVersion = 0;
+let pages = [], selected = null, history = [], placing = false, busy = false, renderVersion = 0, selectedText = null, movingText = false;
 const clone = value => structuredClone(value);
 let messageTimer;
-function message(value, persistent = false) { clearTimeout(messageTimer); $('status').textContent = value; $('preview-status').textContent = $('preview').open ? value : ''; if (!persistent) messageTimer = setTimeout(() => $('status').textContent = '', 5500); }
-function remember() { history.push({ pages: clone(pages), selected }); if (history.length > 30) history.shift(); }
+function message(value, persistent = false) { clearTimeout(messageTimer); $('status').textContent = value; $('preview-status').textContent = $('preview').open ? value : ''; if (!persistent) messageTimer = setTimeout(() => { $('status').textContent = ''; $('preview-status').textContent = ''; }, 5500); }
+function remember() { history.push({ pages: clone(pages), selected, selectedText }); if (history.length > 30) history.shift(); }
 function current() { return pages.find(p => p.id === selected); }
-function controls() {
+function controls(refreshPreview = true) {
   const index = pages.findIndex(p => p.id === selected), page = current();
+  if (!page?.texts.some(t => t.id === selectedText)) { selectedText = null; if (movingText) placing = false; movingText = false; }
+  for (const prefix of ['', 'preview-']) {
+    for (const id of ['update-text','move-text','delete-text']) $(prefix+id).disabled = busy || !selectedText;
+  }
   $('save').disabled = busy || !pages.length;
   $('files').disabled = busy;
   for (const id of ['rotate','remove','addtext','cleartext','expand']) $(id).disabled = busy || !page;
@@ -23,11 +27,11 @@ function controls() {
   $('undo').disabled = busy || !history.length;
   $('selected').textContent = page ? `${index + 1} ページ目` : 'ページを選択';
   $('count').textContent = pages.length ? `ページ一覧 · ${pages.length}` : 'ページ一覧';
-  $('toolhint').textContent = placing ? 'ページ上をクリックして文字を配置' : pages.length ? 'ドラッグで並べ替え · クリックで選択' : 'PDFを追加して編集をはじめましょう';
+  $('toolhint').textContent = movingText ? 'ページ上をクリックして選択した文字を移動' : placing ? 'ページ上をクリックして文字を配置' : pages.length ? 'ドラッグで並べ替え · クリックで選択' : 'PDFを追加して編集をはじめましょう';
   $('drop').hidden = !!pages.length;
   $('pages').classList.toggle('placing', placing);
   $('addtext').textContent = placing ? '配置モードを終了' : '＋ 配置モードにする';
-  if ($('preview').open) renderPreview();
+  if (refreshPreview && $('preview').open) renderPreview();
 }
 async function render() {
   const version = ++renderVersion;
@@ -52,7 +56,7 @@ async function render() {
     const meta = document.createElement('div'); meta.className = 'card-meta'; meta.textContent = `${String(index+1).padStart(2,'0')}`;
     const name = document.createElement('span'); name.textContent = source.name; meta.append(name); card.append(sheet,meta); $('pages').append(card);
     card.onclick = () => { selected = item.id; document.querySelectorAll('.card').forEach(c => c.classList.remove('active')); card.classList.add('active'); controls(); };
-    card.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); } };
+    card.onkeydown = event => { if (event.target !== card) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); } };
     card.ondragstart = event => { if (busy) return event.preventDefault(); event.dataTransfer.setData('text/plain',item.id); };
     card.ondragover = event => event.preventDefault();
     card.ondrop = event => { event.preventDefault(); event.stopPropagation(); if (busy) return; const from = pages.findIndex(p => p.id === event.dataTransfer.getData('text/plain')); const to = pages.findIndex(p => p.id === item.id); if (from < 0 || from === to) return; remember(); const [moved] = pages.splice(from,1); pages.splice(to,0,moved); render(); };
@@ -74,16 +78,67 @@ function addAnnotations(sheet, viewport, item) {
     label.style.left = `${x/viewport.width*100}%`; label.style.top = `${y/viewport.height*100}%`;
     label.style.fontSize = `${text.size/viewport.width*100}cqw`; label.style.color = text.color;
     label.style.rotate = `${((item.rotation - (text.rotation ?? item.rotation)) + 360) % 360}deg`;
+    label.classList.toggle('selected-annotation', item.id === selected && text.id === selectedText);
+    label.tabIndex = 0; label.setAttribute('role','button'); label.setAttribute('aria-label',`追加テキストを編集: ${text.text}`); label.dataset.textId = text.id;
+    label.onclick = event => { event.stopPropagation(); selectText(item,text); };
+    label.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); selectText(item,text); } };
+    label.ondragstart = event => { event.preventDefault(); event.stopPropagation(); };
     sheet.append(label);
   }
 }
 function placeText(event, sheet, viewport, item, prefix = '') {
   const text = $(prefix+'text').value.trim(), size = Number($(prefix+'size').value);
-  if (!text || !Number.isFinite(size) || size < 6 || size > 96) return message('テキストと6〜96の文字サイズを入力してください。');
+  if (!movingText && (!text || !Number.isFinite(size) || size < 6 || size > 96)) return message('テキストと6〜96の文字サイズを入力してください。');
   const rect = sheet.getBoundingClientRect();
   const [x,y] = viewport.convertToPdfPoint((event.clientX-rect.left)/rect.width*viewport.width,(event.clientY-rect.top)/rect.height*viewport.height);
-  remember(); item.texts.push({text,x,y,size,color:$(prefix+'color').value,rotation:item.rotation}); selected = item.id; render();
+  if (movingText) {
+    const annotation = item.id === selected && item.texts.find(t=>t.id===selectedText);
+    if (!annotation) return message('移動する文字と同じページ上をクリックしてください。');
+    remember(); annotation.x=x; annotation.y=y; movingText=false; placing=false; message('文字を移動しました。');
+  } else {
+    remember(); selectedText=crypto.randomUUID();
+    item.texts.push({id:selectedText,text,x,y,size,color:$(prefix+'color').value,rotation:item.rotation});
+  }
+  selected = item.id; render();
 }
+
+function selectText(item, text) {
+  if (busy) return;
+  selected = item.id; selectedText = text.id; movingText = false; placing = false;
+  for (const prefix of ['', 'preview-']) {
+    $(prefix+'text').value=text.text; $(prefix+'size').value=text.size; $(prefix+'color').value=text.color;
+  }
+  document.querySelectorAll('.annotation').forEach(el=>el.classList.toggle('selected-annotation',el.dataset.textId===text.id));
+  document.querySelectorAll('.card').forEach(el=>el.classList.toggle('active',!!el.querySelector('.selected-annotation')));
+  controls(false);
+  $('preview-stage').classList.remove('placing');
+  $('preview-place').textContent='＋ 配置モードにする';
+}
+for (const prefix of ['', 'preview-']) {
+  $(prefix+'update-text').onclick = () => {
+    const annotation=current()?.texts.find(t=>t.id===selectedText);
+    if (!annotation || busy) return;
+    const text=$(prefix+'text').value.trim(),size=Number($(prefix+'size').value);
+    if (!text || !Number.isFinite(size) || size<6 || size>96) return message('テキストと6〜96の文字サイズを入力してください。');
+    remember(); Object.assign(annotation,{text,size,color:$(prefix+'color').value}); movingText=false; placing=false;
+    for (const other of ['', 'preview-']) for (const key of ['text','size','color']) $(other+key).value=$(prefix+key).value;
+    message('文字を更新しました。'); render();
+  };
+  $(prefix+'move-text').onclick = () => {
+    if (!selectedText || busy) return;
+    movingText=true; placing=true; controls(); message('同じページ上の移動先をクリックしてください。');
+  };
+  $(prefix+'delete-text').onclick = () => {
+    const page=current(); if (!page || !selectedText || busy) return;
+    remember(); page.texts=page.texts.filter(t=>t.id!==selectedText); selectedText=null; movingText=false; placing=false; message('選択した文字を削除しました。'); render();
+  };
+}
+function togglePlacing() {
+  placing = !placing; movingText = false; selectedText = null;
+  document.querySelectorAll('.selected-annotation').forEach(el=>el.classList.remove('selected-annotation'));
+  controls();
+}
+
 let previewVersion = 0;
 async function renderPreview() {
   const version = ++previewVersion, item = current();
@@ -120,10 +175,10 @@ $('preview-close').onclick = () => $('preview').close();
 $('preview').addEventListener('close', () => {
   previewVersion++;
   for (const id of ['text','size','color']) $(id).value = $('preview-'+id).value;
-  placing = false; controls();
+  placing = false; movingText=false; controls();
 });
 $('preview-zoom').onchange = renderPreview;
-$('preview-place').onclick = () => { placing = !placing; controls(); };
+$('preview-place').onclick = togglePlacing;
 $('preview-undo').onclick = () => $('undo').click();
 for (const [id, delta] of [['preview-prev',-1],['preview-next',1]]) $(id).onclick = () => {
   const item = pages[pages.findIndex(p=>p.id===selected)+delta];
@@ -155,8 +210,8 @@ $('drop').ondrop = event => { event.preventDefault(); $('drop').classList.remove
 for (const [id,delta] of [['left',-1],['right',1]]) $(id).onclick = () => { if (busy) return; remember(); pages = movePage(pages,pages.findIndex(p=>p.id===selected),delta); render(); };
 $('rotate').onclick = () => { const page=current(); if (!page || busy) return; remember(); for (const t of page.texts) t.rotation ??= page.rotation; page.rotation=(page.rotation+90)%360; render(); };
 $('remove').onclick = () => { if (busy) return; remember(); const index=pages.findIndex(p=>p.id===selected); pages.splice(index,1); selected=pages[Math.min(index,pages.length-1)]?.id??null; render(); };
-$('undo').onclick = () => { if (busy) return; const previous=history.pop(); if (previous) { pages=previous.pages; selected=previous.selected; render(); } };
-$('addtext').onclick = () => { placing=!placing; controls(); if (placing) message('ページ上をクリックしてテキストを配置してください。'); };
+$('undo').onclick = () => { if (busy) return; const previous=history.pop(); if (previous) { pages=previous.pages; selected=previous.selected; selectedText=previous.selectedText; movingText=false; placing=false; message('直前の操作を元に戻しました。'); render(); } };
+$('addtext').onclick = () => { togglePlacing(); if (placing) message('ページ上をクリックしてテキストを配置してください。'); };
 $('cleartext').onclick = () => { if (busy || !current()) return; remember(); current().texts=[]; render(); };
 $('save').onclick = async () => {
   if (busy || !pages.length) return; busy=true; controls(); message('PDFを書き出しています…',true);
