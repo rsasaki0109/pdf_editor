@@ -7,11 +7,11 @@ import { saveProject, readProject, MAX_PROJECT_BYTES } from './project.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const $ = id => document.getElementById(id);
 const sources = new Map();
-let pages = [], selected = null, history = [], future = [], placing = false, busy = false, renderVersion = 0, selectedText = null, movingText = false;
+let pages = [], selected = null, history = [], future = [], placing = false, busy = false, renderVersion = 0, selectedText = null, movingText = false, checkedPages = new Set();
 const clone = value => structuredClone(value);
 let messageTimer;
 function message(value, persistent = false) { clearTimeout(messageTimer); $('status').textContent = value; $('preview-status').textContent = $('preview').open ? value : ''; if (!persistent) messageTimer = setTimeout(() => { $('status').textContent = ''; $('preview-status').textContent = ''; }, 5500); }
-function snapshot() { return { pages: clone(pages), selected, selectedText }; }
+function snapshot() { return { pages: clone(pages), selected, selectedText, checkedPages: [...checkedPages] }; }
 function remember() { history.push(snapshot()); if (history.length > 30) history.shift(); future = []; }
 function current() { return pages.find(p => p.id === selected); }
 function controls(refreshPreview = true) {
@@ -20,6 +20,15 @@ function controls(refreshPreview = true) {
   for (const prefix of ['', 'preview-']) {
     for (const id of ['update-text','move-text','delete-text']) $(prefix+id).disabled = busy || !selectedText;
   }
+  const pageIds=new Set(pages.map(p=>p.id));
+  checkedPages=new Set([...checkedPages].filter(id=>pageIds.has(id)));
+  $('bulk-tools').hidden=!pages.length;
+  $('bulk-count').textContent=`${checkedPages.size}ページ選択`;
+  $('select-all').disabled=busy || !pages.length;
+  $('select-all').checked=pages.length>0 && checkedPages.size===pages.length;
+  $('select-all').indeterminate=checkedPages.size>0 && checkedPages.size<pages.length;
+  for (const id of ['bulk-clear','bulk-rotate','bulk-delete','bulk-export']) $(id).disabled=busy || !checkedPages.size;
+  document.querySelectorAll('.page-check').forEach(input=>{input.disabled=busy;input.checked=checkedPages.has(input.value);input.closest('.card').classList.toggle('checked-card',input.checked);});
   $('save').disabled = busy || !pages.length;
   $('files').disabled = busy;
   $('save-project').disabled = busy || !pages.length;
@@ -54,13 +63,21 @@ async function render() {
     if (version !== renderVersion) return;
     const viewport = pdfPage.getViewport({scale:1, rotation:item.rotation});
     const card = document.createElement('div'); card.className = `card${selected === item.id ? ' active' : ''}`;
+    card.classList.toggle('checked-card',checkedPages.has(item.id));
     card.draggable = true; card.tabIndex = 0; card.setAttribute('role','button'); card.setAttribute('aria-label',`${index+1}ページ目を選択`);
     const sheet = document.createElement('div'); sheet.className = 'sheet';
     const canvas = document.createElement('canvas'); sheet.append(canvas);
     const drawing = pdfPage.getViewport({scale:440/viewport.width, rotation:item.rotation});
     canvas.width = Math.ceil(drawing.width); canvas.height = Math.ceil(drawing.height);
     const meta = document.createElement('div'); meta.className = 'card-meta'; meta.textContent = `${String(index+1).padStart(2,'0')}`;
-    const name = document.createElement('span'); name.textContent = source.name; meta.append(name); card.append(sheet,meta); $('pages').append(card);
+    const name = document.createElement('span'); name.textContent = source.name; meta.append(name); card.append(sheet,meta);
+    const checkLabel=document.createElement('label');checkLabel.className='page-check-label';
+    const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.className='page-check';checkbox.value=item.id;checkbox.checked=checkedPages.has(item.id);checkbox.disabled=busy;
+    checkbox.setAttribute('aria-label',`${index+1}ページ目をまとめて操作する対象に選択`);
+    checkLabel.append(checkbox);card.prepend(checkLabel);checkLabel.onclick=event=>event.stopPropagation();
+    checkbox.onchange=()=>{if (busy) return; if (checkbox.checked) checkedPages.add(item.id); else checkedPages.delete(item.id); controls(false);};
+    checkLabel.ondragstart=event=>event.preventDefault();
+    $('pages').append(card);
     card.onclick = () => { if (busy) return; selected = item.id; document.querySelectorAll('.card').forEach(c => c.classList.remove('active')); card.classList.add('active'); controls(); };
     card.onkeydown = event => { if (event.target !== card) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); } };
     card.ondragstart = event => { if (busy) return event.preventDefault(); event.dataTransfer.setData('text/plain',item.id); };
@@ -219,7 +236,7 @@ for (const [id,delta] of [['left',-1],['right',1]]) $(id).onclick = () => { if (
 $('rotate').onclick = () => { const page=current(); if (!page || busy) return; remember(); for (const t of page.texts) t.rotation ??= page.rotation; page.rotation=(page.rotation+90)%360; render(); };
 $('remove').onclick = () => { if (busy) return; remember(); const index=pages.findIndex(p=>p.id===selected); pages.splice(index,1); selected=pages[Math.min(index,pages.length-1)]?.id??null; render(); };
 function restoreSnapshot(state) {
-  pages=state.pages; selected=state.selected; selectedText=state.selectedText; movingText=false; placing=false;
+  pages=state.pages; selected=state.selected; selectedText=state.selectedText; checkedPages=new Set(state.checkedPages??[]); movingText=false; placing=false;
   const annotation=current()?.texts.find(text=>text.id===selectedText);
   if (annotation) for (const prefix of ['', 'preview-']) for (const key of ['text','size','color']) $(prefix+key).value=annotation[key];
   render();
@@ -281,7 +298,7 @@ $('project-file').onchange = async event => {
       return {...page,id,sourceId:sourceIds.get(page.sourceId),texts:page.texts.map(text=>({...text,id:crypto.randomUUID()}))};
     });
     remember(); for (const [id,source] of staged) sources.set(id,source);
-    pages=restoredPages; selected=restoredSelection; selectedText=null; placing=false; movingText=false; installed=true;
+    pages=restoredPages; checkedPages.clear(); selected=restoredSelection; selectedText=null; placing=false; movingText=false; installed=true;
     message('作業を復元しました。続けて編集できます。');
   } catch(error) { message(`作業を開けませんでした: ${error.message}`); }
   finally {
@@ -290,15 +307,35 @@ $('project-file').onchange = async event => {
   }
 };
 
-$('save').onclick = async () => {
-  if (busy || !pages.length) return; busy=true; controls(); message('PDFを書き出しています…',true);
+async function writePdf(exportPages, filename) {
+  if (busy || !exportPages.length) return; busy=true; controls(); message('PDFを書き出しています…',true);
   try {
     let fontBytes;
-    if (pages.some(p=>p.texts.length)) { const response=await fetch(`${import.meta.env.BASE_URL}fonts/NotoSansJP-Regular.otf`); if (!response.ok) throw new Error('日本語フォントを読み込めません。'); fontBytes=await response.arrayBuffer(); }
-    const bytes=await exportPdf(pages,sources,fontBytes);
-    downloadFile(new Blob([bytes],{type:'application/pdf'}),'edited-document.pdf'); message('PDFを書き出しました。');
+    if (exportPages.some(p=>p.texts.length)) { const response=await fetch(`${import.meta.env.BASE_URL}fonts/NotoSansJP-Regular.otf`); if (!response.ok) throw new Error('日本語フォントを読み込めません。'); fontBytes=await response.arrayBuffer(); }
+    const bytes=await exportPdf(exportPages,sources,fontBytes);
+    downloadFile(new Blob([bytes],{type:'application/pdf'}),filename); message('PDFを書き出しました。');
   } catch(error) { message(`書き出せませんでした: ${error.message}`); }
   finally { busy=false; controls(); }
+};
+$('save').onclick=()=>writePdf(pages,'edited-document.pdf');
+$('bulk-export').onclick=()=>writePdf(pages.filter(page=>checkedPages.has(page.id)),'selected-pages.pdf');
+$('select-all').onchange=()=>{if (busy) return; checkedPages=$('select-all').checked ? new Set(pages.map(page=>page.id)) : new Set();controls(false);};
+$('bulk-clear').onclick=()=>{if (busy) return;checkedPages.clear();controls(false);};
+$('bulk-rotate').onclick=()=>{
+  if (busy || !checkedPages.size) return;
+  remember();
+  for (const page of pages) if (checkedPages.has(page.id)) {
+    for (const text of page.texts) text.rotation??=page.rotation;
+    page.rotation=(page.rotation+90)%360;
+  }
+  message(`${checkedPages.size}ページを回転しました。`);render();
+};
+$('bulk-delete').onclick=()=>{
+  if (busy || !checkedPages.size) return;
+  remember(); const count=checkedPages.size;
+  pages=pages.filter(page=>!checkedPages.has(page.id));checkedPages.clear();
+  if (!pages.some(page=>page.id===selected)) {selected=pages[0]?.id??null;selectedText=null;}
+  placing=false;movingText=false;message(`${count}ページを削除しました。`);render();
 };
 window.addEventListener('beforeunload',event => { if (pages.length) { event.preventDefault(); event.returnValue=''; } });
 render();
