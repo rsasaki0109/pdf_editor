@@ -77,3 +77,20 @@ test('copied text stays independent and broken projects preserve current work',a
   await page.locator('#output-name').fill('白紙から作成');const file=info.outputPath('blank.pdf');await download(page,'#save',file);
   const pdf=await PDFDocument.load(await fs.readFile(file));expect(pdf.getPageCount()).toBe(2);expect(pdf.getPage(0).getWidth()).toBeCloseTo(595.28,1);
 });
+test('search finds original and added text and follows edits and page changes',async({page})=>{
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.locator('#files').setInputFiles(await fixture());await expect(page.locator('.card')).toHaveCount(3);
+ await page.locator('#document-query').fill('ＰＡＧＥ ２');await expect(page.locator('.search-result')).toHaveCount(1);await expect(page.locator('.search-result strong')).toHaveText('2ページ目');
+ await page.locator('.search-result').click();await expect(page.locator('#selected')).toHaveText('2 ページ目');
+ await page.locator('#duplicate').click();await expect(page.locator('.card')).toHaveCount(4);await expect(page.locator('.search-result')).toHaveCount(2);
+ await page.locator('.search-result').nth(1).click();await expect(page.locator('#selected')).toHaveText('3 ページ目');await page.locator('#remove').click();await expect(page.locator('.search-result')).toHaveCount(1);
+ await page.locator('#undo').click();await expect(page.locator('.search-result')).toHaveCount(2);
+ await page.locator('.search-result').first().click();await page.locator('#left').click();await expect(page.locator('.search-result strong')).toHaveText(['1ページ目','3ページ目']);
+ await page.locator('#search-clear').click();await expect(page.locator('.search-result')).toHaveCount(0);await expect(page.locator('#search-status')).toBeEmpty();
+ await page.locator('#tab-text').click();await page.locator('#text').fill('請求 合計 １００ 円');await page.locator('#addtext').click();await page.locator('.sheet').first().click({position:{x:30,y:90}});
+ await page.locator('#document-query').fill('合計100円');await expect(page.locator('.search-result')).toHaveCount(1);
+ await page.locator('#pages .annotation').click();await page.locator('#text').fill('金額２００円');await page.locator('#update-text').click();await expect(page.locator('.search-result')).toHaveCount(0);await expect(page.locator('#search-status')).toContainText('0ページ');
+ await page.locator('#document-query').fill('金額200円');await expect(page.locator('.search-result')).toHaveCount(1);
+ await page.locator('#document-query').fill('Page');await page.locator('#document-query').fill('not-present');await expect(page.locator('#search-status')).toContainText('0ページ');await expect(page.locator('.search-result')).toHaveCount(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();expect(errors).toEqual([]);
+});

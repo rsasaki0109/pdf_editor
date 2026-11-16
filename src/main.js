@@ -4,6 +4,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, PageSizes } from 'pdf-lib';
 import { movePage, exportPdf, duplicatePages } from './model.js';
 import { outputFilename } from './filename.js';
+import { normalizeSearch, searchSnippet } from './search.js';
 import { parsePageRange } from './page-range.js';
 import { saveProject, readProject, MAX_PROJECT_BYTES } from './project.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -37,6 +38,7 @@ function controls(refreshPreview = true) {
   document.querySelectorAll('.page-check').forEach(input=>{input.disabled=busy;input.checked=checkedPages.has(input.value);input.closest('.card').classList.toggle('checked-card',input.checked);});
   $('save').disabled = busy || !pages.length;
   $('output-name').disabled=busy;
+  document.querySelectorAll('.search-result').forEach(button=>button.disabled=busy);
   $('files').disabled = busy;
   $('add-blank').disabled = busy;
   $('save-project').disabled = busy || !pages.length;
@@ -58,7 +60,7 @@ function controls(refreshPreview = true) {
 }
 async function render() {
   const version = ++renderVersion;
-  controls(); $('pages').replaceChildren(); $('sources').replaceChildren();
+  controls(); refreshSearch(); $('pages').replaceChildren(); $('sources').replaceChildren();
   for (const [id, source] of sources) {
     const count = pages.filter(p => p.sourceId === id).length;
     if (!count) continue;
@@ -71,6 +73,7 @@ async function render() {
     if (version !== renderVersion) return;
     const viewport = pdfPage.getViewport({scale:1, rotation:item.rotation});
     const card = document.createElement('div'); card.className = `card${selected === item.id ? ' active' : ''}`;
+    card.dataset.pageId=item.id;
     card.classList.toggle('checked-card',checkedPages.has(item.id));
     card.draggable = true; card.tabIndex = 0; card.setAttribute('role','button'); card.setAttribute('aria-label',`${index+1}ページ目を選択`);
     const sheet = document.createElement('div'); sheet.className = 'sheet';
@@ -100,6 +103,62 @@ async function render() {
     catch(error) { if (version === renderVersion) message(`プレビューに失敗しました: ${error.message}`); }
   }
 }
+
+
+const sourceText = new WeakMap();
+let searchVersion=0, searchTimer;
+async function originalText(item) {
+  const source=sources.get(item.sourceId);
+  let cache=sourceText.get(source);
+  if (!cache) {cache=new Map();sourceText.set(source,cache);}
+  if (!cache.has(item.index)) cache.set(item.index,(async()=>{
+    const pdfPage=await source.pdf.getPage(item.index+1),content=await pdfPage.getTextContent();
+    return content.items.map(part=>part.str??'').join(' ');
+  })());
+  try {return await cache.get(item.index);} catch(error) {cache.delete(item.index);throw error;}
+}
+async function refreshSearch() {
+  clearTimeout(searchTimer);
+  const version=++searchVersion, query=$('document-query').value;
+  $('search-clear').disabled=!query;
+  $('search-results').replaceChildren();
+  if (!normalizeSearch(query)) {$('search-status').textContent='';return;}
+  if (!pages.length) {$('search-status').textContent='PDFを追加して検索してください。';return;}
+  $('search-status').textContent='検索しています…';
+  const found=[], entries=pages.map(item=>({...item,texts:item.texts.map(text=>text.text)}));
+  let failures=0;
+  for (const [index,item] of entries.entries()) {
+    if (version!==searchVersion) return;
+    let original='';
+    try {original=await originalText(item);} catch {failures++;}
+    if (version!==searchVersion) return;
+    const snippet=searchSnippet([original,...item.texts].join(' '),query);
+    if (snippet!==null) found.push({id:item.id,index,snippet});
+  }
+  if (version!==searchVersion) return;
+  $('search-status').textContent=`${found.length}ページが見つかりました。${failures?' 一部のページは文字を読み取れませんでした。':''}`;
+  for (const result of found) {
+    const li=document.createElement('li'),button=document.createElement('button');button.type='button';button.className='search-result';button.disabled=busy;
+    const title=document.createElement('strong');title.textContent=`${result.index+1}ページ目`;
+    const snippet=document.createElement('span');snippet.textContent=result.snippet;button.append(title,snippet);li.append(button);$('search-results').append(li);
+    button.onclick=async()=>{
+      if (busy || !pages.some(item=>item.id===result.id)) return;
+      selected=result.id;selectedText=null;placing=false;movingText=false;
+      await render();
+      const card=[...document.querySelectorAll('.card')].find(el=>el.dataset.pageId===result.id);
+      card?.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+      card?.focus({preventScroll:true});
+    };
+  }
+}
+$('document-query').oninput=()=>{
+  searchVersion++;clearTimeout(searchTimer);
+  $('search-results').replaceChildren();$('search-clear').disabled=!$('document-query').value;
+  $('search-status').textContent=normalizeSearch($('document-query').value)?'検索しています…':'';
+  searchTimer=setTimeout(refreshSearch,180);
+};
+$('document-query').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();refreshSearch();}};
+$('search-clear').onclick=()=>{$('document-query').value='';refreshSearch();$('document-query').focus();};
 
 function addAnnotations(sheet, viewport, item) {
   sheet.style.containerType = 'inline-size';
