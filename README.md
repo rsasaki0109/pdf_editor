@@ -1,4 +1,4 @@
-# PDF Studio 1.1
+# PDF Studio
 
 [![CI](https://github.com/rsasaki0109/pdf_editor/actions/workflows/ci.yml/badge.svg)](https://github.com/rsasaki0109/pdf_editor/actions/workflows/ci.yml)
 
