@@ -150,6 +150,7 @@ test('GitHub README becomes editable paper and guide; both drafts survive save a
  const paperText=spawnSync('/usr/bin/pdftotext',[paper,'-'],{encoding:'utf8'});expect(paperText.status).toBe(0);expect(paperText.stderr).toBe('');expect(paperText.stdout).toContain('設計・手法');
  expect(paperText.stdout).toContain('動作テストを実施');expect(paperText.stdout).toContain('github.com');
  await page.locator('#builder-type').selectOption('guide');await expect(page.locator('#builder-doc-title')).toHaveValue('example/oss — ユーザーガイド');
+ await page.locator('.builder-agent summary').click();await expect(page.locator('#builder-agent-prompt')).toHaveValue(/ユーザーガイド/);await expect(page.locator('#builder-agent-prompt')).toHaveAttribute('readonly','');
  expect(await page.locator('#builder-section-installation').inputValue()).toContain('npm run my_task');
  await page.locator('#builder-doc-title').fill('OSSユーザーガイド');await page.locator('#builder-author').fill('操作説明者');
  const guide=info.outputPath('guide.pdf');await download(page,'#builder-download',guide);

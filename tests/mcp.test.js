@@ -1,0 +1,58 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {tmpdir} from 'node:os';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
+import {PDFDocument} from 'pdf-lib';
+import {readDocumentDraft} from '../src/document-draft.js';
+const server=fileURLToPath(new URL('../mcp/server.mjs',import.meta.url));
+test('MCP stdio research-to-PDF workflow preserves evidence and enforces repository boundaries',async()=>{
+ const temp=await fs.mkdtemp(path.join(tmpdir(),'pdf-mcp-')),repo=path.join(temp,'repo'),output=path.join(temp,'artifacts');
+ await fs.mkdir(path.join(repo,'src'),{recursive:true});await fs.mkdir(path.join(repo,'tests'));
+ await fs.writeFile(path.join(repo,'README.md'),'# Sample\n日本語のOSSです。\n');
+ await fs.writeFile(path.join(repo,'src/index.js'),'export const add = (a, b) => a + b;\n');
+ await fs.writeFile(path.join(repo,'tests/add.test.js'),'// This test source is not an execution report.\n');
+ await fs.writeFile(path.join(repo,'package.json'),'{}');await fs.writeFile(path.join(repo,'.env'),'PRIVATE_KEY=must-not-read');await fs.writeFile(path.join(repo,'.secrets'),'private');
+ await fs.writeFile(path.join(temp,'outside.txt'),'outside repository');await fs.symlink(path.join(temp,'outside.txt'),path.join(repo,'src/link.txt'));
+ const git=args=>execFileSync('git',['-C',repo,...args],{stdio:'pipe'});
+ git(['init']);git(['add','.']);git(['-c','user.name=Test','-c','user.email=test@example.test','commit','-m','Fixture']);
+ const transport=new StdioClientTransport({command:process.execPath,args:[server,'--repo',repo,'--output',output],stderr:'pipe'});
+ const client=new Client({name:'pdf-studio-test',version:''});
+ try {
+  await client.connect(transport);
+  const names=(await client.listTools()).tools.map(tool=>tool.name);assert.equal(names.length,7);assert.ok(names.includes('render_document'));
+  const prompt=await client.getPrompt({name:'write_oss_document',arguments:{goal:'日本語の技術資料を作る',type:'paper'}});assert.match(prompt.messages[0].content.text,/Reading tests is static evidence only/);
+  async function call(name,args={},error=false){const result=await client.callTool({name,arguments:args});if(error){assert.equal(result.isError,true);return result.content[0].text;}assert.notEqual(result.isError,true,result.content?.[0]?.text);return result.structuredContent;}
+  const listing=await call('inspect_repository');assert.equal(listing.verification,'not_run');assert.ok(!listing.files.some(item=>item.path==='.env'||item.path==='.secrets'));
+  const page=await call('list_repository_files',{offset:0,limit:1});assert.equal(page.files.length,1);assert.equal(page.next_offset,1);
+  for(const file of ['../outside.txt','.env','.secrets','src/link.txt','not-tracked.txt'])await call('read_repository_file',{path:file},true);
+  await call('read_repository_file',{path:'README.md',start_line:1,end_line:500},true);
+  const job=await call('create_document_job',{type:'paper',goal:'日本語の根拠付き技術資料'});
+  const readme=await call('read_repository_file',{path:'README.md',job_id:job.job_id});assert.equal(readme.start_line,1);assert.ok(readme.file_sha256);assert.equal(readme.working_tree_changed,false);
+  const draft={title:'ソースに基づく技術資料0109',author:'',abstract:'小さな加算関数を提供する。',sections:{implementation:'加算関数を実装している。',evaluation:'テストのソースがある。実行結果は未検証である。'}};
+  const docsOnly={abstract:[readme.evidence_id],sections:{implementation:[readme.evidence_id],evaluation:[readme.evidence_id]}};
+  assert.match(await call('save_document_draft',{job_id:job.job_id,draft,citations:docsOnly},true),/documentation-only/);
+  const [source,tests]=await Promise.all([call('read_repository_file',{path:'src/index.js',job_id:job.job_id}),call('read_repository_file',{path:'tests/add.test.js',job_id:job.job_id})]);
+  const status=await call('get_document_job',{job_id:job.job_id});assert.equal(status.coverage.evidence_count,3);assert.equal(status.coverage.verification,'not_run');
+  const citations={abstract:[source.evidence_id],sections:{implementation:[source.evidence_id],evaluation:[tests.evidence_id]}};
+  await call('save_document_draft',{job_id:job.job_id,draft,citations:{abstract:[],sections:{}}},true);
+  await call('save_document_draft',{job_id:job.job_id,draft,citations:{...citations,abstract:['src_'+'a'.repeat(24)]}},true);
+  const saved=await call('save_document_draft',{job_id:job.job_id,draft,citations});
+  const bundle=readDocumentDraft(await fs.readFile(saved.draft_path,'utf8'));assert.match(bundle.drafts.paper.references,/src\/index.js:1-/);assert.match(bundle.drafts.paper.sections.implementation,/\[1\]/);
+  const rendered=await call('render_document',{job_id:job.job_id});assert.ok(rendered.pdf_path.startsWith(output+path.sep));const pdf=await PDFDocument.load(await fs.readFile(rendered.pdf_path));assert.equal(pdf.getTitle(),draft.title);
+  await fs.writeFile(path.join(repo,'src/index.js'),'export const add = (a, b) => Number(a) + Number(b);\n');
+  assert.match(await call('render_document',{job_id:job.job_id},true),/stale/);
+  const fresh=await call('read_repository_file',{path:'src/index.js',job_id:job.job_id});assert.equal(fresh.working_tree_changed,true);
+  const updated={abstract:[fresh.evidence_id],sections:{implementation:[fresh.evidence_id],evaluation:[tests.evidence_id]}};
+  await call('save_document_draft',{job_id:job.job_id,draft,citations:updated});await assert.rejects(fs.stat(rendered.pdf_path));await call('render_document',{job_id:job.job_id});
+  const guide=await call('create_document_job',{type:'guide',goal:'使い方を説明する'});const evidence=await call('read_repository_file',{path:'src/index.js',job_id:guide.job_id});
+  const guideDraft={title:'ユーザーガイド',abstract:'加算機能の使用方法。',sections:{usage:'add関数に2つの値を渡す。'}};
+  await call('save_document_draft',{job_id:guide.job_id,draft:guideDraft,citations:{abstract:[evidence.evidence_id],sections:{usage:[evidence.evidence_id]}}});
+  const guideResult=await call('render_document',{job_id:guide.job_id});assert.ok((await fs.stat(guideResult.pdf_path)).size>1000);
+  await call('get_document_job',{job_id:'../outside'},true);
+ }finally{await client.close();await fs.rm(temp,{recursive:true,force:true});}
+});

@@ -1,24 +1,8 @@
 import {DOCUMENT_TYPES,createDrafts,fetchRepository} from './oss-documents.js';
 import {createDocumentPdf} from './document-pdf.js';
 import {outputFilename} from './filename.js';
-const emptyDrafts=()=>Object.fromEntries(Object.entries(DOCUMENT_TYPES).map(([key,config])=>[key,{title:'',author:'',abstract:'',references:'',sections:Object.fromEntries(config.sections.map(([id])=>[id,'']))}]));
-export function readDocumentDraft(value) {
-  let data;try {data=JSON.parse(value);} catch {throw new Error('下書きファイルを読み込めません。');}
-  if (data?.format!=='oss-document-draft' || data.schema!==1 || !Object.hasOwn(DOCUMENT_TYPES,data.type)) throw new Error('対応していない下書きファイルです。');
-  const drafts=emptyDrafts();
-  for (const [type,config] of Object.entries(DOCUMENT_TYPES)) {
-    const source=data.drafts?.[type];if (!source) throw new Error('下書きの内容が不足しています。');
-    for (const key of ['title','author','abstract','references']) {
-      if (typeof source[key]!=='string' || source[key].length>(['title','author'].includes(key)?300:6000)) throw new Error('下書きの内容を確認してください。');
-      drafts[type][key]=source[key];
-    }
-    for (const [id] of config.sections) {
-      if (typeof source.sections?.[id]!=='string' || source.sections[id].length>12000) throw new Error('下書きの章を確認してください。');
-      drafts[type].sections[id]=source.sections[id];
-    }
-  }
-  return {type:data.type,drafts};
-}
+import {emptyDrafts,readDocumentDraft} from './document-draft.js';
+export {readDocumentDraft} from './document-draft.js';
 export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
   const $=id=>document.getElementById(id),dialog=$('document-builder');
   let type='paper',drafts=emptyDrafts(),working=false,generating=false,controller,dirty=false;
@@ -29,6 +13,7 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
   function render() {
     const draft=drafts[type];
     $('builder-type').value=type;
+    $('builder-agent-prompt').value=`PDF Studio MCPを使い、このOSSの${DOCUMENT_TYPES[type].label}を日本語で作ってください。READMEに加えて、実装・設定・テストを調査し、各章にファイルの行範囲と根拠を紐付けてください。静的なコード確認と実際のテスト実行結果を区別し、未確認の性能や評価を創作しないでください。まず不足情報を整理し、原稿を見直してからPDFを生成してください。編集可能なdraft.ossdoc.jsonとPDFの保存先も示してください。`;
     for(const [id,key] of [['doc-title','title'],['author','author'],['abstract','abstract'],['references','references']]) $('builder-'+id).value=draft[key];
     $('builder-sections').replaceChildren();
     for(const [id,title] of DOCUMENT_TYPES[type].sections) {

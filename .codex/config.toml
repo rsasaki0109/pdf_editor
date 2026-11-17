@@ -1,0 +1,7 @@
+# Open Codex at this repository root. To inspect another OSS, use the absolute-path
+# registration example in docs/codex-mcp.md instead.
+[mcp_servers.pdf_studio]
+command = "node"
+args = ["mcp/server.mjs", "--repo", ".", "--output", ".pdf-studio"]
+startup_timeout_sec = 20
+tool_timeout_sec = 120
