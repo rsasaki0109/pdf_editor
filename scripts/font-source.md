@@ -20,3 +20,5 @@ TrueType outlines avoid the invalid CFF subset font warnings produced by the pre
 c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f  NotoSansJP[wght].ttf
 83a598b965a848965ee3d7544f38ad5d519757cb53a3250053284a001e7b2642  public/fonts/NotoSansJP-Regular.ttf
 ```
+
+PDF embedding disables the OpenType `locl` substitution to keep standard glyph IDs with Unicode mappings. This prevents digits in Latin repository names and URLs from becoming unmapped localized glyphs during PDF extraction.

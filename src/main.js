@@ -1,4 +1,5 @@
 import './style.css';
+import {setupDocumentBuilder} from './document-builder.js';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, PageSizes } from 'pdf-lib';
@@ -42,6 +43,7 @@ function controls(refreshPreview = true) {
   document.querySelectorAll('.search-result').forEach(button=>button.disabled=busy);
   $('files').disabled = busy;
   $('add-blank').disabled = busy;
+  $('open-document-builder').disabled=busy;
   $('save-project').disabled = busy || !pages.length;
   $('open-project').disabled = busy;
   $('project-file').disabled = busy;
@@ -392,6 +394,7 @@ $('redo').onclick = () => {
   history.push(snapshot()); restoreSnapshot(future.pop()); message('操作をやり直しました。');
 };
 document.addEventListener('keydown', event => {
+  if ($('document-builder').open) return;
   if (event.defaultPrevented || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
   const target=event.target;
   if (target instanceof Element && target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"])')) return;
@@ -493,4 +496,5 @@ $('bulk-delete').onclick=()=>{
   placing=false;movingText=false;message(`${count}ページを削除しました。`);render();
 };
 window.addEventListener('beforeunload',event => { if (pages.length) { event.preventDefault(); event.returnValue=''; } });
+setupDocumentBuilder({addFiles,isBusy:()=>busy,setBusy:value=>{busy=value;controls();},downloadFile});
 render();

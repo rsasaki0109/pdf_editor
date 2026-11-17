@@ -24,7 +24,7 @@ export async function exportPdf(pages, sources, fontBytes) {
   if (!pages.length) throw new Error('ページを追加してください。');
   const output = await PDFDocument.create();
   output.registerFontkit(fontkit);
-  const font = pages.some(p => p.texts.length) ? await output.embedFont(fontBytes, { subset: false }) : null;
+  const font = pages.some(p => p.texts.length) ? await output.embedFont(fontBytes, { subset: false, features: { locl: false } }) : null;
   const loaded = new Map();
   for (const item of pages) {
     if (!loaded.has(item.sourceId)) loaded.set(item.sourceId, await PDFDocument.load(sources.get(item.sourceId).bytes));

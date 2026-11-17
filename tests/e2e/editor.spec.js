@@ -135,3 +135,42 @@ test('numbered page moves preserve selection and history; preview jumps do not r
  const file=info.outputPath('reordered.pdf');await download(page,'#save',file);const text=spawnSync('/usr/bin/pdftotext',[file,'-'],{encoding:'utf8'});expect(text.status).toBe(0);expect(text.stdout.indexOf('Page 2')).toBeLessThan(text.stdout.indexOf('Page 3'));expect(text.stdout.indexOf('Page 3')).toBeLessThan(text.stdout.indexOf('Page 1'));
  expect(errors).toEqual([]);
 });
+test('GitHub README becomes editable paper and guide; both drafts survive save and reload',async({page},info)=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const readme='# OSS Sample\n日本語のOSSです。\n## Architecture\n処理をブラウザ内で実行します。\n## インストール\n```sh\nnpm install\nnpm run my_task\n```\n## 使い方\nファイルを選択して保存します。\n## 主な機能\n文書作成。\n## 制約\nOCRは未対応です。';
+ await page.route('https://api.github.com/repos/example/oss**',async route=>{
+  const isReadme=new URL(route.request().url()).pathname.endsWith('/readme');
+  await route.fulfill({json:isReadme?{encoding:'base64',content:Buffer.from(readme).toString('base64'),path:'README.md'}:{full_name:'example/oss',description:'OSSの紹介',default_branch:'main'},headers:{'access-control-allow-origin':'*'}});
+ });
+ await page.locator('#open-document-builder').click();await page.locator('#builder-repository').fill('https://github.com/example/oss');await page.locator('#builder-import').click();
+ await expect(page.locator('#builder-doc-title')).toHaveValue('example/oss — 技術論文');await expect(page.locator('#builder-section-evaluation')).toHaveValue('');
+ expect(await page.locator('#builder-references').inputValue()).toContain('https://github.com/example/oss/blob/main/README.md');
+ await page.locator('#builder-doc-title').fill('OSSの技術論文');await page.locator('#builder-author').fill('開発者 / 技術部');await page.locator('#builder-section-evaluation').fill('入力した条件で動作テストを実施した。');
+ const paper=info.outputPath('paper.pdf');const paperDownload=await download(page,'#builder-download',paper);expect(paperDownload.suggestedFilename()).toBe('OSSの技術論文.pdf');
+ const paperText=spawnSync('/usr/bin/pdftotext',[paper,'-'],{encoding:'utf8'});expect(paperText.status).toBe(0);expect(paperText.stderr).toBe('');expect(paperText.stdout).toContain('設計・手法');
+ expect(paperText.stdout).toContain('動作テストを実施');expect(paperText.stdout).toContain('github.com');
+ await page.locator('#builder-type').selectOption('guide');await expect(page.locator('#builder-doc-title')).toHaveValue('example/oss — ユーザーガイド');
+ expect(await page.locator('#builder-section-installation').inputValue()).toContain('npm run my_task');
+ await page.locator('#builder-doc-title').fill('OSSユーザーガイド');await page.locator('#builder-author').fill('操作説明者');
+ const guide=info.outputPath('guide.pdf');await download(page,'#builder-download',guide);
+ const guideText=spawnSync('/usr/bin/pdftotext',[guide,'-'],{encoding:'utf8'});expect(guideText.status).toBe(0);expect(guideText.stderr).toBe('');expect(guideText.stdout).toContain('OSSユーザーガイド');expect(guideText.stdout).toContain('npm run my_task');expect(guideText.stdout).toContain('トラブル対処');
+ for(const [name,file] of [['paper',paper],['guide',guide]]){
+  const doc=await PDFDocument.load(await fs.readFile(file));expect(doc.getPage(0).getWidth()).toBeCloseTo(595.28,1);
+  const raster=spawnSync('/usr/bin/pdftoppm',['-singlefile','-scale-to','1100','-png',file,info.outputPath(name)],{encoding:'utf8'});expect(raster.status).toBe(0);expect(raster.stderr).toBe('');
+ }
+ await page.screenshot({path:info.outputPath('builder.png')});
+ const draftFile=info.outputPath('draft.json');await download(page,'#builder-save-draft',draftFile);const saved=JSON.parse(await fs.readFile(draftFile,'utf8'));expect(saved.drafts.paper.author).toBe('開発者 / 技術部');expect(saved.drafts.guide.author).toBe('操作説明者');
+ await page.reload();await page.locator('#open-document-builder').click();await page.locator('#builder-draft-file').setInputFiles(draftFile);await expect(page.locator('#builder-doc-title')).toHaveValue('OSSユーザーガイド');
+ await page.locator('#builder-type').selectOption('paper');await expect(page.locator('#builder-doc-title')).toHaveValue('OSSの技術論文');await expect(page.locator('#builder-section-evaluation')).toHaveValue('入力した条件で動作テストを実施した。');
+ await page.locator('#builder-add').click();await expect(page.locator('#document-builder')).not.toBeVisible();await expect(page.locator('.card')).not.toHaveCount(0);
+ await page.locator('#document-query').fill('OSSの技術論文');await expect(page.locator('.search-result')).not.toHaveCount(0);expect(errors).toEqual([]);
+});
+test('document builder reports missing GitHub access and rejects broken drafts without losing the manuscript',async({page})=>{
+ await page.locator('#files').setInputFiles(await fixture());await expect(page.locator('.card')).toHaveCount(3);
+ await page.route('https://api.github.com/repos/example/oss**',r=>r.fulfill({status:403,json:{message:'rate limit'},headers:{'access-control-allow-origin':'*'}}));
+ await page.locator('#open-document-builder').click();await page.locator('#builder-repository').fill('https://github.com/example/oss');await page.locator('#builder-import').click();await expect(page.locator('#builder-status')).toContainText('アクセス制限');
+ await page.locator('#builder-doc-title').fill('手書きの原稿');await page.locator('#builder-abstract').fill('確認した概要を記入します。');
+ await page.locator('#builder-draft-file').setInputFiles({name:'bad.json',mimeType:'application/json',buffer:Buffer.from('{}')});await expect(page.locator('#builder-status')).toContainText('対応していない');await expect(page.locator('#builder-doc-title')).toHaveValue('手書きの原稿');
+ await page.locator('#builder-close').focus();await page.keyboard.press('Control+z');await expect(page.locator('.card')).toHaveCount(3);
+ await page.locator('#builder-close').click();await page.locator('#open-document-builder').click();await expect(page.locator('#builder-doc-title')).toHaveValue('手書きの原稿');
+});
