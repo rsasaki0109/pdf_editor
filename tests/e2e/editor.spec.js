@@ -115,3 +115,23 @@ test('page operations work inside the enlarged preview including last-page delet
  await page.locator('#undo').click();await expect(page.locator('.card')).toHaveCount(1);await page.locator('#expand').click();await expect(page.locator('#preview-page')).toHaveText('1 / 1');
  expect(errors).toEqual([]);
 });
+test('numbered page moves preserve selection and history; preview jumps do not reorder pages',async({page},info)=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.locator('#files').setInputFiles(await fixture());await expect(page.locator('.card')).toHaveCount(3);
+ await page.locator('.page-check').first().check();await page.locator('#move-page-number').fill('３');await page.locator('#move-page-number').press('Enter');
+ await expect(page.locator('#selected')).toHaveText('3 ページ目');await expect(page.locator('.page-check').nth(2)).toBeChecked();
+ await page.locator('#undo').click();await expect(page.locator('#selected')).toHaveText('1 ページ目');await expect(page.locator('#redo')).toBeEnabled();
+ await page.locator('#move-page-number').fill('1');await page.locator('#move-page-apply').click();await expect(page.locator('#redo')).toBeEnabled();
+ await page.locator('#move-page-number').fill('4');await page.locator('#move-page-apply').click();await expect(page.locator('#move-page-error')).not.toBeEmpty();await expect(page.locator('#selected')).toHaveText('1 ページ目');
+ await page.locator('#redo').click();await expect(page.locator('#selected')).toHaveText('3 ページ目');
+ await page.locator('#expand').click();await page.locator('#preview-jump-number').fill('１');await page.locator('#preview-jump-number').press('Enter');await expect(page.locator('#preview-page')).toHaveText('1 / 3');
+ await page.locator('#preview-jump-number').fill('0');await page.locator('#preview-jump-apply').click();await expect(page.locator('#preview-jump-error')).not.toBeEmpty();await expect(page.locator('#preview-page')).toHaveText('1 / 3');
+ await page.locator('#preview-jump-number').fill('2');await page.locator('#preview-jump-number').press('Enter');await expect(page.locator('#preview-page')).toHaveText('2 / 3');await expect(page.locator('#preview-jump-error')).toBeEmpty();
+ if(info.project.name==='mobile') await page.setViewportSize({width:390,height:600});
+ await page.screenshot({path:info.outputPath('numbered-page-navigation.png')});
+ await expect(page.locator('#preview-close')).toBeInViewport();await expect(page.locator('#preview-jump-number')).toBeInViewport();
+ await page.locator('#preview-close').click();const project=info.outputPath('order.pdfstudio');await download(page,'#save-project',project);
+ const data=JSON.parse(await fs.readFile(project,'utf8'));expect(data.pages.map(p=>p.index)).toEqual([1,2,0]);
+ const file=info.outputPath('reordered.pdf');await download(page,'#save',file);const text=spawnSync('/usr/bin/pdftotext',[file,'-'],{encoding:'utf8'});expect(text.status).toBe(0);expect(text.stdout.indexOf('Page 2')).toBeLessThan(text.stdout.indexOf('Page 3'));expect(text.stdout.indexOf('Page 3')).toBeLessThan(text.stdout.indexOf('Page 1'));
+ expect(errors).toEqual([]);
+});

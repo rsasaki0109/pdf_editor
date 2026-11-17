@@ -5,6 +5,7 @@ import { PDFDocument, PageSizes } from 'pdf-lib';
 import { movePage, exportPdf, duplicatePages } from './model.js';
 import { outputFilename } from './filename.js';
 import { normalizeSearch, searchSnippet } from './search.js';
+import { pageNumberToIndex, movePageTo } from './page-position.js';
 import { parsePageRange } from './page-range.js';
 import { saveProject, readProject, MAX_PROJECT_BYTES } from './project.js';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -45,6 +46,9 @@ function controls(refreshPreview = true) {
   $('open-project').disabled = busy;
   $('project-file').disabled = busy;
   for (const id of ['rotate','remove','addtext','cleartext','expand','duplicate']) $(id).disabled = busy || !page;
+  $('move-page-number').disabled=busy || !page;
+  $('move-page-apply').disabled=busy || !page;
+  $('move-page-hint').textContent=`移動後のページ番号（1〜${pages.length}）を指定します。`;
   $('left').disabled = busy || index <= 0;
   $('right').disabled = busy || index < 0 || index >= pages.length - 1;
   $('cleartext').disabled = busy || !page?.texts.length;
@@ -252,6 +256,9 @@ async function renderPreview() {
   if (!item) { $('preview').close(); return; }
   const index = pages.indexOf(item);
   for (const id of ['preview-rotate','preview-duplicate','preview-remove']) $(id).disabled=busy;
+  $('preview-jump-number').disabled=busy;
+  $('preview-jump-apply').disabled=busy;
+  $('preview-jump-number').placeholder=`1〜${pages.length}`;
   $('preview-page').textContent = `${index+1} / ${pages.length}`;
   $('preview-prev').disabled = busy || index === 0;
   $('preview-next').disabled = busy || index === pages.length-1;
@@ -275,9 +282,33 @@ async function renderPreview() {
     await pdfPage.render({canvasContext:canvas.getContext('2d'),viewport:drawing}).promise; canvas.dataset.rendered='true';
   } catch (error) { if (version === previewVersion) message(`拡大表示に失敗しました: ${error.message}`); }
 }
+
+function clearPositionError(prefix) {
+  $(prefix+'error').textContent='';$(prefix+'number').removeAttribute('aria-invalid');
+}
+for (const prefix of ['move-page-','preview-jump-']) $(prefix+'number').oninput=()=>clearPositionError(prefix);
+$('move-page-form').onsubmit=event=>{
+  event.preventDefault();if (busy || !current()) return;
+  try {
+    const target=pageNumberToIndex($('move-page-number').value,pages.length);
+    const next=movePageTo(pages,pages.findIndex(page=>page.id===selected),target);
+    clearPositionError('move-page-');
+    if (next===pages) {message('すでに指定した位置にあります。');return;}
+    remember();pages=next;placing=false;movingText=false;render();message(`${target+1}ページ目へ移動しました。`);
+  } catch(error) {$('move-page-error').textContent=error.message;$('move-page-number').setAttribute('aria-invalid','true');}
+};
+$('preview-jump-form').onsubmit=event=>{
+  event.preventDefault();if (busy || !pages.length) return;
+  try {
+    const target=pageNumberToIndex($('preview-jump-number').value,pages.length);
+    clearPositionError('preview-jump-');selected=pages[target].id;selectedText=null;placing=false;movingText=false;render();
+  } catch(error) {$('preview-jump-error').textContent=error.message;$('preview-jump-number').setAttribute('aria-invalid','true');}
+};
+
 $('expand').onclick = () => {
   if (!current() || busy) return;
   for (const id of ['text','size','color']) $('preview-'+id).value = $(id).value;
+  clearPositionError('preview-jump-'); $('preview-jump-number').value='';
   $('preview-status').textContent = ''; $('preview').showModal(); renderPreview();
 };
 for (const action of ['rotate','duplicate','remove']) $('preview-'+action).onclick=()=>$(action).click();
