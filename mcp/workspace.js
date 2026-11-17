@@ -75,7 +75,7 @@ export async function openWorkspace(directory,repository) {
     async render(id) {return withJob(id,async(dir,job)=>{
       if(!job.draft)throw new Error('Save a cited draft first.');await freshness(job,job.used_evidence);
       const font=await fs.readFile(new URL('../public/fonts/NotoSansJP-Regular.ttf',import.meta.url));
-      const bytes=await createDocumentPdf(job.type,job.draft,font);await write(dir,'document.pdf',bytes);
+      const bytes=await createDocumentPdf(job.type,job.draft,font);await freshness(job,job.used_evidence);await write(dir,'document.pdf',bytes);
       job.status='rendered';job.artifacts={pdf_path:path.join(dir,'document.pdf'),draft_path:path.join(dir,'draft.ossdoc.json'),pdf_sha256:sha256(bytes)};
       await write(dir,'job.json',JSON.stringify(job,null,2));return {job_id:id,status:job.status,...job.artifacts,coverage:coverage(job)};
     });},

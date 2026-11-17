@@ -27,7 +27,8 @@ test('MCP stdio research-to-PDF workflow preserves evidence and enforces reposit
   const names=(await client.listTools()).tools.map(tool=>tool.name);assert.equal(names.length,7);assert.ok(names.includes('render_document'));
   const prompt=await client.getPrompt({name:'write_oss_document',arguments:{goal:'日本語の技術資料を作る',type:'paper'}});assert.match(prompt.messages[0].content.text,/Reading tests is static evidence only/);
   async function call(name,args={},error=false){const result=await client.callTool({name,arguments:args});if(error){assert.equal(result.isError,true);return result.content[0].text;}assert.notEqual(result.isError,true,result.content?.[0]?.text);return result.structuredContent;}
-  const listing=await call('inspect_repository');assert.equal(listing.verification,'not_run');assert.ok(!listing.files.some(item=>item.path==='.env'||item.path==='.secrets'));
+  const monitor=path.join(temp,'monitor.sh'),marker=path.join(temp,'monitor-ran');await fs.writeFile(monitor,`#!/bin/sh\ntouch '${marker}'\n`,{mode:0o700});git(['config','core.fsmonitor',monitor]);
+  const listing=await call('inspect_repository');await assert.rejects(fs.stat(marker));assert.equal(listing.verification,'not_run');assert.ok(!listing.files.some(item=>item.path==='.env'||item.path==='.secrets'));
   const page=await call('list_repository_files',{offset:0,limit:1});assert.equal(page.files.length,1);assert.equal(page.next_offset,1);
   for(const file of ['../outside.txt','.env','.secrets','src/link.txt','not-tracked.txt'])await call('read_repository_file',{path:file},true);
   await call('read_repository_file',{path:'README.md',start_line:1,end_line:500},true);
