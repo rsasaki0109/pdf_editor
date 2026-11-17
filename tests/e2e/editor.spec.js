@@ -94,3 +94,24 @@ test('search finds original and added text and follows edits and page changes',a
  await page.locator('#document-query').fill('Page');await page.locator('#document-query').fill('not-present');await expect(page.locator('#search-status')).toContainText('0ページ');await expect(page.locator('.search-result')).toHaveCount(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();expect(errors).toEqual([]);
 });
+test('page operations work inside the enlarged preview including last-page deletion',async({page},info)=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.locator('#files').setInputFiles(await fixture());await expect(page.locator('.card')).toHaveCount(3);
+ await page.locator('#expand').click();await expect(page.locator('#preview-page')).toHaveText('1 / 3');
+ await page.locator('#preview-rotate').click();
+ await expect.poll(()=>page.locator('#preview-stage canvas').evaluate(c=>c.width>c.height)).toBeTruthy();
+ await page.locator('#preview-duplicate').click();await expect(page.locator('#preview-page')).toHaveText('2 / 4');
+ await expect(page.locator('#preview')).toBeVisible();await expect(page.locator('.card')).toHaveCount(4);
+ await page.locator('#preview-remove').click();await expect(page.locator('#preview-page')).toHaveText('2 / 3');
+ await page.locator('#preview-undo').click();await expect(page.locator('#preview-page')).toHaveText('2 / 4');
+ await page.locator('#preview-redo').click();await expect(page.locator('#preview-page')).toHaveText('2 / 3');
+ await page.locator('#preview-zoom').selectOption('0.75');await expect(page.locator('#preview-stage canvas')).toHaveAttribute('data-rendered','true');
+ await page.screenshot({path:info.outputPath('preview-page-actions.png')});
+ await page.locator('#preview-close').click();const file=info.outputPath('edited.pdf');await download(page,'#save',file);
+ const result=await PDFDocument.load(await fs.readFile(file));expect(result.getPageCount()).toBe(3);expect(result.getPage(0).getRotation().angle).toBe(90);expect(result.getPage(1).getRotation().angle).toBe(0);
+ await page.locator('#expand').click();
+ for(let count=2;count>=0;count--){await page.locator('#preview-remove').click();await expect(page.locator('.card')).toHaveCount(count);}
+ await expect(page.locator('#preview')).not.toBeVisible();await expect(page.locator('#save')).toBeDisabled();
+ await page.locator('#undo').click();await expect(page.locator('.card')).toHaveCount(1);await page.locator('#expand').click();await expect(page.locator('#preview-page')).toHaveText('1 / 1');
+ expect(errors).toEqual([]);
+});

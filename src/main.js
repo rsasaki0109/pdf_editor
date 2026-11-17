@@ -251,6 +251,7 @@ async function renderPreview() {
   const version = ++previewVersion, item = current();
   if (!item) { $('preview').close(); return; }
   const index = pages.indexOf(item);
+  for (const id of ['preview-rotate','preview-duplicate','preview-remove']) $(id).disabled=busy;
   $('preview-page').textContent = `${index+1} / ${pages.length}`;
   $('preview-prev').disabled = busy || index === 0;
   $('preview-next').disabled = busy || index === pages.length-1;
@@ -279,6 +280,7 @@ $('expand').onclick = () => {
   for (const id of ['text','size','color']) $('preview-'+id).value = $(id).value;
   $('preview-status').textContent = ''; $('preview').showModal(); renderPreview();
 };
+for (const action of ['rotate','duplicate','remove']) $('preview-'+action).onclick=()=>$(action).click();
 $('preview-close').onclick = () => $('preview').close();
 $('preview').addEventListener('close', () => {
   previewVersion++;
@@ -343,7 +345,7 @@ $('drop').ondragleave = () => $('drop').classList.remove('drag');
 $('drop').ondrop = event => { event.preventDefault(); $('drop').classList.remove('drag'); addFiles([...event.dataTransfer.files]); };
 for (const [id,delta] of [['left',-1],['right',1]]) $(id).onclick = () => { if (busy) return; remember(); pages = movePage(pages,pages.findIndex(p=>p.id===selected),delta); render(); };
 $('rotate').onclick = () => { const page=current(); if (!page || busy) return; remember(); for (const t of page.texts) t.rotation ??= page.rotation; page.rotation=(page.rotation+90)%360; render(); };
-$('remove').onclick = () => { if (busy) return; remember(); const index=pages.findIndex(p=>p.id===selected); pages.splice(index,1); selected=pages[Math.min(index,pages.length-1)]?.id??null; render(); };
+$('remove').onclick = () => { if (busy || !current()) return; remember(); const index=pages.findIndex(p=>p.id===selected); pages.splice(index,1); selected=pages[Math.min(index,pages.length-1)]?.id??null; render(); };
 function restoreSnapshot(state) {
   pages=state.pages; selected=state.selected; selectedText=state.selectedText; checkedPages=new Set(state.checkedPages??[]); movingText=false; placing=false;
   const annotation=current()?.texts.find(text=>text.id===selectedText);
