@@ -3,11 +3,13 @@ import {createDocumentPdf} from './document-pdf.js';
 import {outputFilename} from './filename.js';
 import {emptyDrafts,readDocumentDraft} from './document-draft.js';
 import {readFigures} from './document-figures.js';
+import {setupDocumentPreview} from './document-preview.js';
 import {setupFigureEditor} from './document-figure-editor.js';
 export {readDocumentDraft} from './document-draft.js';
 export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
   const $=id=>document.getElementById(id),dialog=$('document-builder');
   let type='paper',drafts=emptyDrafts(),working=false,generating=false,controller,dirty=false;
+  const openPreview=setupDocumentPreview(downloadFile);
   const figures=setupFigureEditor($('builder-figures'),{changed:()=>{dirty=true;}});
   function collect() {
     return {title:$('builder-doc-title').value,author:$('builder-author').value,abstract:$('builder-abstract').value,references:$('builder-references').value,
@@ -72,7 +74,7 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
     } catch(error) {status(error.message);}
     finally {event.target.value='';}
   };
-  async function generate(add) {
+  async function generate(action) {
     if(working||isBusy())return;drafts[type]=collect();const draft=drafts[type];
     if(!draft.title.trim()){status('タイトルを入力してください。');$('builder-doc-title').focus();return;}
     if(!draft.abstract.trim()&&!Object.values(draft.sections).some(value=>value.trim())){status('要旨または本文を入力してください。');return;}
@@ -83,13 +85,22 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
       const response=await fetch(`${import.meta.env.BASE_URL}fonts/NotoSansJP-Regular.ttf`);
       if(!response.ok)throw new Error('日本語フォントを読み込めません。');
       const bytes=await createDocumentPdf(type,draft,await response.arrayBuffer()),name=outputFilename(draft.title,'pdf');
-      if(add)file=new File([bytes],name,{type:'application/pdf'});
-      else downloadFile(new Blob([bytes],{type:'application/pdf'}),name);
-      status(add?'編集画面に追加しています…':'PDFを保存しました。');
+      if(action==='preview'){
+        await openPreview(bytes,name);
+        status('');
+      } else if(action==='add'){
+        file=new File([bytes],name,{type:'application/pdf'});
+        status('編集画面に追加しています…');
+      } else {
+        downloadFile(new Blob([bytes],{type:'application/pdf'}),name);
+        status('PDFを保存しました。');
+      }
     } catch(error) {status(`PDFを作成できませんでした: ${error.message}`);}
     finally {generating=false;setBusy(false);lock(false);}
     if(file){dialog.close();await addFiles([file]);}
   }
-  $('builder-download').onclick=()=>generate(false);$('builder-add').onclick=()=>generate(true);
+  $('builder-preview').onclick=()=>generate('preview');
+  $('builder-download').onclick=()=>generate('download');
+  $('builder-add').onclick=()=>generate('add');
   render();
 }

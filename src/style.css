@@ -18,3 +18,12 @@
 .builder-content{overflow-wrap:anywhere}
 .builder-agent{margin:18px 0;border:1px solid #cbdcba;border-radius:8px;background:#f1f7e9;padding:14px 18px;color:#38572d;font-size:12px;line-height:1.9}.builder-agent summary{cursor:pointer;font-weight:500}.builder-agent a{color:#315c3d;text-underline-offset:3px}.builder-agent ol{padding-left:22px}.builder-agent textarea[readonly]{background:#fff;font-size:12px;color:#47613b}.builder-agent p:last-child{margin-bottom:0}
 .builder-figure-tools{border-top:1px solid #dce5d2;margin-top:24px;padding-top:12px}.builder-figure-tools h3{font-size:15px;font-weight:500}.figure-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.figure-actions strong{margin-right:auto}.figure-actions button,.figure-card>button,.figure-row>button{font-size:11px}.figure-card{margin:16px 0;padding:16px;border:1px solid #cbdcba;border-radius:7px;background:#f1f7e9;min-width:0}.figure-card .field{margin:10px 0}.figure-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;border-top:1px solid #dce5d2;padding:8px 0}.figure-row>.field{min-width:0}.figure-row input{min-width:0;width:100%;box-sizing:border-box}.figure-row>button{align-self:end;justify-self:start;margin-bottom:8px}@media(max-width:650px){.figure-row{grid-template-columns:minmax(0,1fr)}.figure-card{padding:12px}.figure-actions{gap:6px}}
+#draft-preview-dialog{width:min(850px,96vw);max-width:96vw;height:94dvh;max-height:94dvh;padding:0;border:1px solid #d0dbc5;border-radius:12px;background:#f1f4ee;color:#233d36}
+#draft-preview-dialog[open]{display:flex;flex-direction:column}
+.draft-preview-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 14px;background:#fff;border-bottom:1px solid #e1e7d8}
+#draft-preview-page{min-width:54px;text-align:center;font-variant-numeric:tabular-nums}
+#draft-preview-save{margin-left:auto}
+#draft-preview-status{margin:6px 14px;font-size:12px}
+#draft-preview-status:empty{display:none}
+#draft-preview-stage{flex:1;min-height:0;overflow:auto;display:grid;align-content:start;justify-items:center}
+#draft-preview-stage canvas{display:block;height:auto;max-width:100%}
