@@ -29,3 +29,5 @@
 #draft-preview-stage canvas{display:block;height:auto;max-width:100%}
 #draft-preview-outline-label:not([hidden]){display:flex;align-items:center;gap:10px;padding:8px 14px;background:#fff;border-bottom:1px solid #e1e7d8;font-size:12px}
 #draft-preview-outline{flex:1;min-width:0;padding:7px;border:1px solid #d4dfcb;border-radius:6px;background:white;color:#233d36;font:inherit}
+.builder-recovery{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.builder-recovery button{margin-left:auto;font-size:11px}

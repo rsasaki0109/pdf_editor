@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 // Serve the exact production bundle through request routing. No preview daemon needed.
-test.beforeEach(async ({page})=>{
+async function openEditor(page){
   await page.route('http://localhost:4217/**',async route=>{
     const url=new URL(route.request().url());
     const file=path.resolve('dist','.'+(url.pathname==='/'?'/index.html':url.pathname));
@@ -15,7 +15,8 @@ test.beforeEach(async ({page})=>{
   });
   await page.goto('http://localhost:4217/');
   page.on('dialog',dialog=>dialog.accept());
-});
+}
+test.beforeEach(async ({page})=>openEditor(page));
 async function fixture(){
   const doc=await PDFDocument.create();const font=await doc.embedFont(StandardFonts.Helvetica);
   for(let i=0;i<3;i++){const p=doc.addPage([400,500]);p.drawText(`Page ${i+1}`,{x:30,y:450,font,size:24});}
@@ -213,4 +214,38 @@ test('editable figures retain sources and ranges across document switches and JS
  const pdf=await PDFDocument.load(await fs.readFile(pdfFile));expect(pdf.getPageCount()).toBe(3);
  const text=spawnSync('/usr/bin/pdftotext',['-layout',pdfFile,'-'],{encoding:'utf8'});expect(text.status).toBe(0);expect(text.stdout).toContain('0.048218');expect(text.stdout).toContain('検証済み出力');expect(text.stdout).toContain('今回の再測定ではない');
  await page.locator('.figure-card').first().getByRole('button',{name:'図を削除',exact:true}).click();await expect(page.locator('.figure-card')).toHaveCount(1);
+});
+
+test('recovers unfinished drafts and keeps another tab from overwriting them',async({page,context})=>{
+ await page.locator('#open-document-builder').click();
+ await page.locator('#builder-doc-title').fill('編集中の論文');
+ await page.locator('#builder-add-bar').click();
+ await page.locator('.figure-card').getByLabel('値',{exact:true}).fill('');
+ await page.locator('#builder-type').selectOption('guide');
+ await page.locator('#builder-doc-title').fill('編集中のガイド');
+ await page.reload();
+ await page.locator('#open-document-builder').click();
+ await expect(page.locator('#builder-recovery')).toContainText('復元しました');
+ await expect(page.locator('#builder-type')).toHaveValue('guide');
+ await expect(page.locator('#builder-doc-title')).toHaveValue('編集中のガイド');
+ await page.locator('#builder-type').selectOption('paper');
+ await expect(page.locator('#builder-doc-title')).toHaveValue('編集中の論文');
+ await expect(page.locator('.figure-card').getByLabel('値',{exact:true})).toHaveValue('');
+ await expect(page.locator('.figure-card').getByLabel('出典（必須）',{exact:true})).toHaveValue('');
+ await expect(page.locator('#builder-recovery')).toContainText('自動保存しました');
+
+ const other=await context.newPage();
+ await openEditor(other);
+ await other.locator('#open-document-builder').click();
+ await other.locator('#builder-doc-title').fill('別のタブの変更');
+ await expect(other.locator('#builder-recovery')).toContainText('自動保存しました');
+ await page.locator('#builder-doc-title').fill('競合した変更');
+ await expect(page.locator('#builder-recovery')).toContainText('別のタブが下書きを更新');
+ await other.locator('#builder-clear-recovery').click();
+ await expect(other.locator('#builder-doc-title')).toHaveValue('');
+ await other.reload();
+ await other.locator('#open-document-builder').click();
+ await expect(other.locator('#builder-doc-title')).toHaveValue('');
+ await expect(other.locator('.figure-card')).toHaveCount(0);
+ await other.close();
 });

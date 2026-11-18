@@ -5,12 +5,15 @@ import {emptyDrafts,readDocumentDraft} from './document-draft.js';
 import {readFigures} from './document-figures.js';
 import {setupDocumentPreview} from './document-preview.js';
 import {setupFigureEditor} from './document-figure-editor.js';
+const RECOVERY_KEY='pdf-studio:document-draft';
 export {readDocumentDraft} from './document-draft.js';
 export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
   const $=id=>document.getElementById(id),dialog=$('document-builder');
   let type='paper',drafts=emptyDrafts(),working=false,generating=false,controller,dirty=false;
+  let lastSaved, pending=false, saveTimer;
+  const recovery=$('builder-recovery');
   const openPreview=setupDocumentPreview(downloadFile);
-  const figures=setupFigureEditor($('builder-figures'),{changed:()=>{dirty=true;}});
+  const figures=setupFigureEditor($('builder-figures'),{changed:queueSave});
   function collect() {
     return {title:$('builder-doc-title').value,author:$('builder-author').value,abstract:$('builder-abstract').value,references:$('builder-references').value,
       figures:figures.read(),sections:Object.fromEntries(DOCUMENT_TYPES[type].sections.map(([id])=>[id,$(`builder-section-${id}`).value]))};
@@ -29,21 +32,84 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
       label.append(textarea);$('builder-sections').append(label);
     }
   }
+  function serialize(indent) {
+    return JSON.stringify({format:'oss-document-draft',schema:1,type,drafts},null,indent);
+  }
+  function queueSave() {
+    dirty=pending=true;
+    clearTimeout(saveTimer);
+    saveTimer=setTimeout(saveRecovery,250);
+  }
+  function saveRecovery() {
+    clearTimeout(saveTimer);
+    if(!pending)return;
+    drafts[type]=collect();
+    try {
+      if(localStorage.getItem(RECOVERY_KEY)!==lastSaved) {
+        recovery.textContent='別のタブが下書きを更新しました。このタブの変更は「下書きを保存」でファイルに保存できます。';
+        return;
+      }
+      const snapshot=serialize();
+      localStorage.setItem(RECOVERY_KEY,snapshot);
+      lastSaved=snapshot;
+      dirty=pending=false;
+      recovery.textContent='このブラウザに自動保存しました。';
+    } catch {
+      recovery.textContent='自動保存できませんでした。「下書きを保存」でファイルに保存できます。';
+    }
+  }
+  function restoreRecovery() {
+    try {
+      lastSaved=localStorage.getItem(RECOVERY_KEY);
+      if(!lastSaved)return;
+      const saved=readDocumentDraft(lastSaved,{allowIncompleteFigures:true});
+      drafts=saved.drafts;
+      type=saved.type;
+      recovery.textContent='自動保存した下書きを復元しました。';
+    } catch {
+      recovery.textContent='ブラウザから下書きを復元できませんでした。';
+    }
+  }
+  $('builder-clear-recovery').onclick=()=>{
+    if(!window.confirm('論文とガイドの下書きと、このブラウザの自動保存を消去しますか？'))return;
+    try {
+      if(localStorage.getItem(RECOVERY_KEY)!==lastSaved) {
+        recovery.textContent='別のタブが下書きを更新しました。そのタブから消去してください。';
+        return;
+      }
+      localStorage.removeItem(RECOVERY_KEY);
+      lastSaved=null;
+    } catch {
+      recovery.textContent='ブラウザの自動保存を消去できませんでした。';
+      return;
+    }
+    clearTimeout(saveTimer);
+    dirty=pending=false;
+    type='paper';
+    drafts=emptyDrafts();
+    render();
+    $('builder-source').textContent='';
+    status('');
+    recovery.textContent='下書きを消去しました。';
+  };
   function status(value) {$('builder-status').textContent=value;}
   function lock(value) {
     working=value;
     dialog.querySelectorAll('input,textarea,select,button').forEach(element=>element.disabled=value);
     $('builder-close').disabled=generating;
   }
-  const hasContent=()=>Object.values(drafts).some(draft=>draft.title||draft.abstract||draft.figures?.length||Object.values(draft.sections).some(Boolean));
+  const hasContent=()=>Object.values(drafts).some(draft=>draft.title||draft.author||draft.abstract||draft.references||draft.figures?.length||Object.values(draft.sections).some(Boolean));
   for(const kind of ['flow','bar'])$(`builder-add-${kind}`).onclick=()=>{if(!figures.add(kind))status('図は8点まで追加できます。');};
-  dialog.addEventListener('input',event=>{if(event.target.id!=='builder-repository' && event.target.id!=='builder-draft-file')dirty=true;});
-  window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
+  dialog.addEventListener('input',event=>{
+    if(event.target.matches('#builder-doc-title,#builder-author,#builder-abstract,#builder-references,#builder-sections textarea,[data-figure-field]'))queueSave();
+  });
+  window.addEventListener('pagehide',saveRecovery);
+  window.addEventListener('beforeunload',event=>{saveRecovery();if(dirty){event.preventDefault();event.returnValue='';}});
   $('open-document-builder').onclick=()=>{if(!isBusy()){dialog.showModal();}};
   $('builder-close').onclick=()=>dialog.close();
   dialog.oncancel=event=>{if(generating)event.preventDefault();};
-  dialog.onclose=()=>{drafts[type]=collect();controller?.abort();};
-  $('builder-type').onchange=()=>{drafts[type]=collect();type=$('builder-type').value;render();status('ドキュメントを切り替えました。もう一方の原稿も保持しています。');};
+  dialog.onclose=()=>{saveRecovery();controller?.abort();};
+  $('builder-type').onchange=()=>{drafts[type]=collect();type=$('builder-type').value;render();queueSave();status('ドキュメントを切り替えました。もう一方の原稿も保持しています。');};
   $('builder-import-form').onsubmit=async event=>{
     event.preventDefault();if(working)return;drafts[type]=collect();
     if(hasContent()&&!window.confirm('READMEから読み込むと、論文とガイドの下書きを置き換えます。必要なら先に「下書きを保存」を使ってください。'))return;
@@ -52,7 +118,7 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
     try {
       const source=await fetchRepository($('builder-repository').value,{signal:controller.signal});
       if(controller.signal.aborted)return;
-      drafts=createDrafts(source);dirty=true;render();$('builder-source').textContent=`出典: ${source.url}`;
+      drafts=createDrafts(source);render();queueSave();$('builder-source').textContent=`出典: ${source.url}`;
       status('READMEの抜粋を章に分けました。空欄の評価や手順を確認・追記してください。');
     } catch(error) {status(error.name==='AbortError'?'読み込みを中止しました。時間をおいて再試行できます。':`読み込めませんでした: ${error.message}`);}
     finally {clearTimeout(timeout);lock(false);controller=null;}
@@ -60,8 +126,9 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
   $('builder-save-draft').onclick=()=>{
     drafts[type]=collect();
     try{for(const draft of Object.values(drafts))readFigures(draft.figures);}catch(error){status(error.message);return;}
-    downloadFile(new Blob([JSON.stringify({format:'oss-document-draft',schema:1,type,drafts},null,2)],{type:'application/json'}),outputFilename(drafts[type].title||'oss-document','json'));
-    dirty=false;status('論文とガイドの下書きを保存しました。');
+    downloadFile(new Blob([serialize(2)],{type:'application/json'}),outputFilename(drafts[type].title||'oss-document','json'));
+    saveRecovery();
+    dirty=pending=false;status('論文とガイドの下書きを保存しました。');
   };
   $('builder-open-draft').onclick=()=>$('builder-draft-file').click();
   $('builder-draft-file').onchange=async event=>{
@@ -70,7 +137,7 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
       if(file.size>1000000)throw new Error('下書きは1MB以下にしてください。');
       const data=readDocumentDraft(await file.text());drafts[type]=collect();
       if(hasContent()&&!window.confirm('現在の下書きを、保存した下書きに置き換えますか？'))return;
-      drafts=data.drafts;type=data.type;dirty=false;render();$('builder-source').textContent='';status('下書きを復元しました。');
+      drafts=data.drafts;type=data.type;render();queueSave();$('builder-source').textContent='';status('下書きを復元しました。');
     } catch(error) {status(error.message);}
     finally {event.target.value='';}
   };
@@ -102,5 +169,6 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
   $('builder-preview').onclick=()=>generate('preview');
   $('builder-download').onclick=()=>generate('download');
   $('builder-add').onclick=()=>generate('add');
+  restoreRecovery();
   render();
 }
