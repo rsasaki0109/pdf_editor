@@ -175,3 +175,26 @@ test('document builder reports missing GitHub access and rejects broken drafts w
  await page.locator('#builder-close').focus();await page.keyboard.press('Control+z');await expect(page.locator('.card')).toHaveCount(3);
  await page.locator('#builder-close').click();await page.locator('#open-document-builder').click();await expect(page.locator('#builder-doc-title')).toHaveValue('手書きの原稿');
 });
+test('editable figures retain sources and ranges across document switches and JSON reload',async({page},info)=>{
+ await page.locator('#open-document-builder').click();await page.locator('#builder-doc-title').fill('図付き原稿');await page.locator('#builder-abstract').fill('確認した実装を図とともに説明する。');
+ await page.locator('#builder-add-flow').click();const flow=page.locator('.figure-card').nth(0);
+ await flow.getByLabel('図のタイトル',{exact:true}).fill('処理の構成');
+ await page.locator('#builder-save-draft').click();await expect(page.locator('#builder-status')).toContainText('図の内容');
+ await flow.getByLabel('出典（必須）',{exact:true}).fill('src/main.js:1–20');
+ await flow.getByLabel('ステップ名',{exact:true}).nth(1).fill('検証済み出力');
+ await page.locator('#builder-add-bar').click();const bar=page.locator('.figure-card').nth(1);
+ await bar.getByLabel('図のタイトル',{exact:true}).fill('上流の比較');await bar.getByLabel('出典（必須）',{exact:true}).fill('docs/comparison.md:148–195');
+ await bar.getByLabel('キャプション・測定条件',{exact:true}).fill('上流公表値。今回の再測定ではない。');await bar.getByLabel('単位',{exact:true}).fill('m');
+ await bar.getByLabel('値',{exact:true}).fill('0.048218');await bar.getByLabel('最小（任意）',{exact:true}).fill('0.04');await bar.getByLabel('最大（任意）',{exact:true}).fill('0.06');
+ await page.locator('#builder-type').selectOption('guide');await expect(page.locator('.figure-card')).toHaveCount(0);await page.locator('#builder-type').selectOption('paper');
+ await expect(page.locator('.figure-card')).toHaveCount(2);await expect(page.locator('.figure-card').nth(1).getByLabel('値',{exact:true})).toHaveValue('0.048218');
+ const file=info.outputPath('figure-draft.json');await download(page,'#builder-save-draft',file);
+ const saved=JSON.parse(await fs.readFile(file,'utf8'));expect(saved.drafts.paper.figures[1].bars[0]).toEqual({label:'項目1',value:.048218,min:.04,max:.06});
+ await page.reload();await page.locator('#open-document-builder').click();await page.locator('#builder-draft-file').setInputFiles(file);
+ await expect(page.locator('.figure-card').nth(1).getByLabel('出典（必須）',{exact:true})).toHaveValue('docs/comparison.md:148–195');
+ await page.locator('.figure-card').nth(1).getByRole('button',{name:'上へ',exact:true}).click();await expect(page.locator('.figure-card').first().getByLabel('図のタイトル',{exact:true})).toHaveValue('上流の比較');
+ await page.screenshot({path:info.outputPath('figure-editor.png')});
+ const pdfFile=info.outputPath('figures.pdf');await download(page,'#builder-download',pdfFile);const pdf=await PDFDocument.load(await fs.readFile(pdfFile));expect(pdf.getPageCount()).toBe(3);
+ const text=spawnSync('/usr/bin/pdftotext',['-layout',pdfFile,'-'],{encoding:'utf8'});expect(text.status).toBe(0);expect(text.stdout).toContain('0.048218');expect(text.stdout).toContain('検証済み出力');expect(text.stdout).toContain('今回の再測定ではない');
+ await page.locator('.figure-card').first().getByRole('button',{name:'図を削除',exact:true}).click();await expect(page.locator('.figure-card')).toHaveCount(1);
+});

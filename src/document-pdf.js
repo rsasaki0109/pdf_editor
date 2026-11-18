@@ -1,11 +1,14 @@
 import {PDFDocument,PageSizes,rgb} from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import {DOCUMENT_TYPES} from './oss-documents.js';
+import {readFigures} from './document-figures.js';
+import {drawDocumentFigures} from './document-figure-pdf.js';
 export async function createDocumentPdf(type, draft, fontBytes) {
   const config=Object.hasOwn(DOCUMENT_TYPES,type)?DOCUMENT_TYPES[type]:null;
   if (!config || !draft.title?.trim()) throw new Error('タイトルを入力してください。');
+  const figures=readFigures(draft.figures);
   const fields=[draft.title,draft.author||'',draft.abstract||'',draft.references||'',...config.sections.map(([key])=>draft.sections[key]||'')];
-  if (fields.some(field=>typeof field!=='string') || fields.join('').length>80000) throw new Error('原稿は合計8万文字以下にしてください。');
+  if (fields.some(field=>typeof field!=='string') || fields.join('').length+JSON.stringify(figures).length>80000) throw new Error('原稿は合計8万文字以下にしてください。');
   const pdf=await PDFDocument.create();pdf.registerFontkit(fontkit);
   // Keep standard glyphs so fontkit substitutions cannot lose digits from URLs.
   const font=await pdf.embedFont(fontBytes,{subset:false,features:{locl:false}}),charset=new Set(font.getCharacterSet());
@@ -72,6 +75,7 @@ export async function createDocumentPdf(type, draft, fontBytes) {
     }
     y-=16;
   }
+  drawDocumentFigures(figures,{newPage:()=>{newPage();return page;},font,lines,width,height,margin,clean});
   for(const [index,p] of pdf.getPages().entries()) {
     const footer=`${index+1} / ${pdf.getPageCount()}`;
     p.drawText(footer,{x:(width-font.widthOfTextAtSize(footer,8))/2,y:28,font,size:8,color:muted});

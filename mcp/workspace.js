@@ -5,6 +5,7 @@ import {DOCUMENT_TYPES} from '../src/oss-documents.js';
 import {emptyDrafts,readDocumentDraft} from '../src/document-draft.js';
 import {createDocumentPdf} from '../src/document-pdf.js';
 import {sha256} from './repository.js';
+import {readFigures} from '../src/document-figures.js';
 export async function openWorkspace(directory,repository) {
   await fs.mkdir(directory,{recursive:true});if((await fs.lstat(directory)).isSymbolicLink())throw new Error('Output directory must not be a symlink.');
   const root=await fs.realpath(directory),queues=new Map();
@@ -50,11 +51,12 @@ export async function openWorkspace(directory,repository) {
     async save(id,draft,citations) {return withJob(id,async(dir,job)=>{
       const config=DOCUMENT_TYPES[job.type],keys=config.sections.map(([key])=>key),sectionValues=draft.sections||{};
       if(Object.keys(sectionValues).some(key=>!keys.includes(key)))throw new Error('Unknown section for this document type.');
-      const allDrafts=emptyDrafts();allDrafts[job.type]={title:draft.title,author:draft.author||'',abstract:draft.abstract||'',references:'',sections:Object.fromEntries(keys.map(key=>[key,sectionValues[key]||'']))};
+      const figures=readFigures(draft.figures);
+      const allDrafts=emptyDrafts();allDrafts[job.type]={title:draft.title,author:draft.author||'',abstract:draft.abstract||'',references:'',figures,sections:Object.fromEntries(keys.map(key=>[key,sectionValues[key]||'']))};
       readDocumentDraft(JSON.stringify({format:'oss-document-draft',schema:1,type:job.type,drafts:allDrafts}));
       if(!draft.title?.trim())throw new Error('Title is required.');
-      const associations={abstract:citations.abstract||[],...Object.fromEntries(keys.map(key=>[key,citations.sections?.[key]||[]]))};
-      const fields={abstract:draft.abstract||'',...sectionValues};
+      const associations={abstract:citations.abstract||[],...Object.fromEntries(keys.map(key=>[key,citations.sections?.[key]||[]])),...Object.fromEntries(figures.map((_,i)=>[`figure:${i}`,citations.figures?.[i]||[]]))};
+      const fields={abstract:draft.abstract||'',...sectionValues,...Object.fromEntries(figures.map((figure,i)=>[`figure:${i}`,figure.source]))};
       for(const [key,text] of Object.entries(fields))if(text.trim()&&!associations[key].length)throw new Error(`Citations are required for ${key}. Leave unsupported sections empty.`);
       const ids=[...new Set(Object.entries(fields).filter(([,text])=>text.trim()).flatMap(([key])=>associations[key]))];if(!ids.length)throw new Error('Source evidence is required.');
       await freshness(job,ids);
@@ -63,7 +65,7 @@ export async function openWorkspace(directory,repository) {
         const e=job.evidence[evidenceId];return `[${index+1}] ${e.path}:${e.start_line}-${e.end_line}\nGit base: ${e.git_commit}${e.working_tree_changed?' (working tree differs)':''}\nSHA-256: ${e.file_sha256}`;
       });
       const cite=(key,text)=>text.trim()?`${text.trim()}\n[${associations[key].map(eid=>ids.indexOf(eid)+1).join(', ')}]`:'';
-      const cited={...allDrafts[job.type],abstract:cite('abstract',draft.abstract||''),sections:Object.fromEntries(keys.map(key=>[key,cite(key,sectionValues[key]||'')])),references:[job.repository.remote?`Repository: ${job.repository.remote}`:'',...references].filter(Boolean).join('\n\n')};
+      const cited={...allDrafts[job.type],figures:figures.map((figure,i)=>({...figure,source:cite(`figure:${i}`,figure.source)})),abstract:cite('abstract',draft.abstract||''),sections:Object.fromEntries(keys.map(key=>[key,cite(key,sectionValues[key]||'')])),references:[job.repository.remote?`Repository: ${job.repository.remote}`:'',...references].filter(Boolean).join('\n\n')};
       const bundle=emptyDrafts();bundle[job.type]=cited;
       if(cited.references.length>6000)throw new Error('References exceed the Web draft limit. Cite fewer, focused source ranges.');
       const payload={format:'oss-document-draft',schema:1,type:job.type,drafts:bundle};

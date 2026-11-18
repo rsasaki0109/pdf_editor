@@ -2,18 +2,22 @@ import {DOCUMENT_TYPES,createDrafts,fetchRepository} from './oss-documents.js';
 import {createDocumentPdf} from './document-pdf.js';
 import {outputFilename} from './filename.js';
 import {emptyDrafts,readDocumentDraft} from './document-draft.js';
+import {readFigures} from './document-figures.js';
+import {setupFigureEditor} from './document-figure-editor.js';
 export {readDocumentDraft} from './document-draft.js';
 export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
   const $=id=>document.getElementById(id),dialog=$('document-builder');
   let type='paper',drafts=emptyDrafts(),working=false,generating=false,controller,dirty=false;
+  const figures=setupFigureEditor($('builder-figures'),{changed:()=>{dirty=true;}});
   function collect() {
     return {title:$('builder-doc-title').value,author:$('builder-author').value,abstract:$('builder-abstract').value,references:$('builder-references').value,
-      sections:Object.fromEntries(DOCUMENT_TYPES[type].sections.map(([id])=>[id,$(`builder-section-${id}`).value]))};
+      figures:figures.read(),sections:Object.fromEntries(DOCUMENT_TYPES[type].sections.map(([id])=>[id,$(`builder-section-${id}`).value]))};
   }
   function render() {
     const draft=drafts[type];
+    figures.render(draft.figures);
     $('builder-type').value=type;
-    $('builder-agent-prompt').value=`PDF Studio MCPを使い、このOSSの${DOCUMENT_TYPES[type].label}を日本語で作ってください。READMEに加えて、実装・設定・テストを調査し、各章にファイルの行範囲と根拠を紐付けてください。静的なコード確認と実際のテスト実行結果を区別し、未確認の性能や評価を創作しないでください。まず不足情報を整理し、原稿を見直してからPDFを生成してください。編集可能なdraft.ossdoc.jsonとPDFの保存先も示してください。`;
+    $('builder-agent-prompt').value=`PDF Studio MCPを使い、このOSSの${DOCUMENT_TYPES[type].label}を日本語で作ってください。READMEに加えて、実装・設定・テストを調査し、各章にファイルの行範囲と根拠を紐付けてください。静的なコード確認と実際のテスト実行結果を区別し、未確認の性能や評価を創作しないでください。必要な構成図や比較グラフも、条件・単位・出典を付けて原稿に含めてください。まず不足情報を整理し、原稿を見直してからPDFを生成してください。編集可能なdraft.ossdoc.jsonとPDFの保存先も示してください。`;
     for(const [id,key] of [['doc-title','title'],['author','author'],['abstract','abstract'],['references','references']]) $('builder-'+id).value=draft[key];
     $('builder-sections').replaceChildren();
     for(const [id,title] of DOCUMENT_TYPES[type].sections) {
@@ -29,7 +33,8 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
     dialog.querySelectorAll('input,textarea,select,button').forEach(element=>element.disabled=value);
     $('builder-close').disabled=generating;
   }
-  const hasContent=()=>Object.values(drafts).some(draft=>draft.title||draft.abstract||Object.values(draft.sections).some(Boolean));
+  const hasContent=()=>Object.values(drafts).some(draft=>draft.title||draft.abstract||draft.figures?.length||Object.values(draft.sections).some(Boolean));
+  for(const kind of ['flow','bar'])$(`builder-add-${kind}`).onclick=()=>{if(!figures.add(kind))status('図は8点まで追加できます。');};
   dialog.addEventListener('input',event=>{if(event.target.id!=='builder-repository' && event.target.id!=='builder-draft-file')dirty=true;});
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
   $('open-document-builder').onclick=()=>{if(!isBusy()){dialog.showModal();}};
@@ -52,6 +57,7 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
   };
   $('builder-save-draft').onclick=()=>{
     drafts[type]=collect();
+    try{for(const draft of Object.values(drafts))readFigures(draft.figures);}catch(error){status(error.message);return;}
     downloadFile(new Blob([JSON.stringify({format:'oss-document-draft',schema:1,type,drafts},null,2)],{type:'application/json'}),outputFilename(drafts[type].title||'oss-document','json'));
     dirty=false;status('論文とガイドの下書きを保存しました。');
   };
@@ -70,6 +76,7 @@ export function setupDocumentBuilder({addFiles,isBusy,setBusy,downloadFile}) {
     if(working||isBusy())return;drafts[type]=collect();const draft=drafts[type];
     if(!draft.title.trim()){status('タイトルを入力してください。');$('builder-doc-title').focus();return;}
     if(!draft.abstract.trim()&&!Object.values(draft.sections).some(value=>value.trim())){status('要旨または本文を入力してください。');return;}
+    try{readFigures(draft.figures);}catch(error){status(error.message);return;}
     generating=true;lock(true);setBusy(true);status('日本語フォントを埋め込んでPDFを作成しています…');
     let file;
     try {

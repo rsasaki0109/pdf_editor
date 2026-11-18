@@ -22,3 +22,18 @@ test('paper and guide export readable Japanese, distinct column layouts and pagi
   await assert.rejects(createDocumentPdf('paper',{...draft,title:''},font),/タイトル/);
  } finally{await rm(dir,{recursive:true,force:true});}
 });
+test('figures render as vector appendix pages with evidence, exact values and no overflow',async()=>{
+ const {flow,bar}=await import('./fixtures/document-figures.js');
+ const font=await readFile('public/fonts/NotoSansJP-Regular.ttf'),dir=await mkdtemp(path.join(tmpdir(),'oss-figures-'));
+ try{
+  const base=await PDFDocument.load(await createDocumentPdf('paper',draft,font));
+  const figures=[{...flow,steps:Array.from({length:8},(_,i)=>({title:`工程${i+1} ${'長い名称'.repeat(10)}`,detail:'説明を確認する。'.repeat(15).slice(0,160)})),caption:'条件の説明。'.repeat(35).slice(0,240),source:'出典の説明。'.repeat(50).slice(0,300)},bar,{...bar,bars:Array.from({length:8},(_,i)=>({label:`項目${i}`,value:i,min:i,max:i+1}))},{...bar,bars:[{label:'ゼロ値',value:0}]}];
+  const file=path.join(dir,'figures.pdf');await writeFile(file,await createDocumentPdf('paper',{...draft,figures},font));
+  const pdf=await PDFDocument.load(await readFile(file));assert.ok(pdf.getPageCount()>=base.getPageCount()+5);
+  const text=spawnSync('/usr/bin/pdftotext',['-layout',file,'-'],{encoding:'utf8'});assert.equal(text.status,0);assert.match(text.stdout,/0.048218/);assert.match(text.stdout,/ゼロ値/);assert.match(text.stdout,/今回の再測定ではない/);assert.ok(text.stdout.replace(/\s/g,'').includes('docs/comparison.md:148–195'));
+  const bbox=spawnSync('/usr/bin/pdftotext',['-bbox',file,'-'],{encoding:'utf8'});assert.equal(bbox.status,0);
+  for(const match of bbox.stdout.matchAll(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)"/g)){
+   const [,x1,y1,x2,y2]=match.map(Number);assert.ok(x1>=45&&x2<=550,match[0]);assert.ok(y1>=20&&y2<=820,match[0]);
+  }
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
