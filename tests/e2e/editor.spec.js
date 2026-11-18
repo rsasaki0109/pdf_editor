@@ -198,7 +198,11 @@ test('editable figures retain sources and ranges across document switches and JS
  const preview=page.locator('#draft-preview-dialog'), indicator=preview.locator('#draft-preview-page');
  await expect(indicator).toHaveText('1 / 3');
  await expect(preview.locator('#draft-preview-previous')).toBeDisabled();
- await preview.locator('#draft-preview-next').click();
+ const outline=preview.getByRole('combobox',{name:'しおり',exact:true});
+ await expect(outline.locator('option')).toHaveText(['章・図を選ぶ','表題（1ページ）','要旨（1ページ）','図1 上流の比較（2ページ）','図2 処理の構成（3ページ）']);
+ await outline.selectOption({label:'図2 処理の構成（3ページ）'});
+ await expect(indicator).toHaveText('3 / 3');
+ await preview.locator('#draft-preview-previous').click();
  await expect(preview.getByRole('img',{name:'PDFの2ページ目'})).toBeVisible();
  await preview.locator('#draft-preview-next').click();
  await expect(indicator).toHaveText('3 / 3');

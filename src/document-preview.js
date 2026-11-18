@@ -7,15 +7,31 @@ export function setupDocumentPreview(downloadFile) {
   const previous = element('previous');
   const next = element('next');
   const save = element('save');
+  const outline = element('outline');
+  let bookmarks = [];
   let loadingTask, pdf, file, pageNumber = 1, rendering = false;
 
   function updateControls() {
     previous.disabled = rendering || !pdf || pageNumber <= 1;
     next.disabled = rendering || !pdf || pageNumber >= pdf.numPages;
     save.disabled = !file;
+    outline.disabled = rendering || !bookmarks.length;
   }
 
-  async function showPage(number) {
+  async function loadOutline() {
+    const items = await pdf.getOutline();
+    bookmarks = await Promise.all((items ?? []).map(async ({title, dest}) => ({
+      title,
+      number: (await pdf.getPageIndex(dest[0])) + 1,
+      top: dest[3],
+    })));
+    outline.replaceChildren(new Option('章・図を選ぶ', ''), ...bookmarks.map(
+      ({title, number}, index) => new Option(`${title}（${number}ページ）`, String(index)),
+    ));
+    element('outline-label').hidden = !bookmarks.length;
+  }
+
+  async function showPage(number, top) {
     rendering = true;
     updateControls();
     element('status').textContent = 'ページを表示しています…';
@@ -33,7 +49,8 @@ export function setupDocumentPreview(downloadFile) {
       canvas.setAttribute('aria-label', `PDFの${number}ページ目`);
       await page.render({canvasContext: canvas.getContext('2d'), viewport: drawing}).promise;
       stage.replaceChildren(canvas);
-      stage.scrollTop = 0;
+      const preview = page.getViewport({scale});
+      stage.scrollTop = Number.isFinite(top) ? Math.max(0, preview.convertToViewportPoint(0, top)[1] - 12) : 0;
       pageNumber = number;
       element('page').textContent = `${number} / ${pdf.numPages}`;
       element('status').textContent = '';
@@ -47,6 +64,12 @@ export function setupDocumentPreview(downloadFile) {
 
   previous.onclick = () => showPage(pageNumber - 1);
   next.onclick = () => showPage(pageNumber + 1);
+  outline.onchange = () => {
+    if (outline.value === '') return;
+    const bookmark = bookmarks[Number(outline.value)];
+    outline.value = '';
+    if (bookmark) void showPage(bookmark.number, bookmark.top);
+  };
   save.onclick = () => downloadFile(file.blob, file.name);
   element('close').onclick = () => { if (!rendering) dialog.close(); };
   dialog.oncancel = event => { if (rendering) event.preventDefault(); };
@@ -61,6 +84,8 @@ export function setupDocumentPreview(downloadFile) {
     // The worker takes ownership of its buffer. Keep the original for downloading.
     void loadingTask?.destroy().catch(() => {});
     pdf = undefined;
+    bookmarks = [];
+    element('outline-label').hidden = true;
     pageNumber = 1;
     file = {blob: new Blob([bytes], {type: 'application/pdf'}), name};
     element('page').textContent = '';
@@ -71,6 +96,7 @@ export function setupDocumentPreview(downloadFile) {
     try {
       loadingTask = getDocument({data: bytes.slice(), isEvalSupported: false});
       pdf = await loadingTask.promise;
+      await loadOutline().catch(() => {});
       await showPage(1);
     } catch {
       rendering = false;

@@ -1,5 +1,5 @@
 import {rgb} from 'pdf-lib';
-export function drawDocumentFigures(figures,{newPage,font,lines,width,height,margin,clean}) {
+export function drawDocumentFigures(figures,{newPage,bookmark,font,lines,width,height,margin,clean}) {
   const ink=rgb(.12,.16,.19),accent=rgb(.19,.36,.40),muted=rgb(.39,.44,.48),pale=rgb(.94,.97,.97),border=rgb(.72,.80,.82),bodyWidth=width-margin*2;
   for(const [index,figure] of figures.entries()){
     let page,y,bottom,part=0;
@@ -7,7 +7,9 @@ export function drawDocumentFigures(figures,{newPage,font,lines,width,height,mar
     const paragraph=(value,x,size,maxWidth)=>{for(const row of lines(value,size,maxWidth)){if(row)text(row,x,y,size);y-=size*1.5;}};
     const start=()=>{
       page=newPage();part++;y=height-margin-42;
-      paragraph(`図${index+1}  ${figure.title}${part>1?'（続き）':''}`,margin,14,bodyWidth);y-=8;
+      const title=`図${index+1}  ${figure.title}`;
+      if(part===1)bookmark(title,page,y+20);
+      paragraph(title+(part>1?'（続き）':''),margin,14,bodyWidth);y-=8;
       if(figure.caption){paragraph(figure.caption,margin,10,bodyWidth);y-=12;}
       const source=lines(`出典：${figure.source}`,8.5,bodyWidth);bottom=margin+42+source.length*13;
       source.forEach((row,i)=>text(row,margin,margin+25+(source.length-1-i)*13,8.5,muted));

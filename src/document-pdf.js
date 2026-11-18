@@ -2,6 +2,7 @@ import {PDFDocument,PageSizes,rgb} from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import {DOCUMENT_TYPES} from './oss-documents.js';
 import {readFigures} from './document-figures.js';
+import {addDocumentOutline} from './document-outline.js';
 import {drawDocumentFigures} from './document-figure-pdf.js';
 export async function createDocumentPdf(type, draft, fontBytes) {
   const config=Object.hasOwn(DOCUMENT_TYPES,type)?DOCUMENT_TYPES[type]:null;
@@ -48,11 +49,17 @@ export async function createDocumentPdf(type, draft, fontBytes) {
       if(line) page.drawText(line,{x,y,size,font,color});y-=leading;
     }
   }
+  const bookmarks=[];
+  const bookmark=(title, target=page, top=y+15)=>bookmarks.push({title:clean(title),page:target,top});
   newPage();y-=12;
+  bookmark('表題',page,height);
   fullText(draft.title.trim(),type==='paper'?18:24,{center:type==='paper',color:accent});y-=8;
   if(draft.author?.trim()){fullText(draft.author.trim(),10,{center:type==='paper',color:muted});y-=12;}
   if(draft.abstract?.trim()) {
-    fullText(type==='paper'?'要旨':'このガイドについて',10,{color:accent});y-=3;
+    const label=type==='paper'?'要旨':'このガイドについて';
+    if(y-15.5<margin+20)newPage();
+    bookmark(label);
+    fullText(label,10,{color:accent});y-=3;
     fullText(draft.abstract.trim(),10,{leading:15});y-=12;
     page.drawLine({start:{x:margin,y:y+3},end:{x:width-margin,y:y+3},thickness:.5,color:rgb(.79,.82,.83)});y-=20;
   }
@@ -67,7 +74,9 @@ export async function createDocumentPdf(type, draft, fontBytes) {
     if(!raw.trim()) continue;
     section++;advance(48);
     const x=()=>margin+column*(columnWidth+gap);
-    for(const heading of lines(`${section}. ${label}`,11,columnWidth)) {advance(18);page.drawText(heading,{x:x(),y,size:11,font,color:accent});y-=18;}
+    const headingText=`${section}. ${label}`;
+    bookmark(headingText);
+    for(const heading of lines(headingText,11,columnWidth)) {advance(18);page.drawText(heading,{x:x(),y,size:11,font,color:accent});y-=18;}
     y-=3;
     for(const line of lines(raw.trim(),10,columnWidth)) {
       advance(15);
@@ -75,7 +84,8 @@ export async function createDocumentPdf(type, draft, fontBytes) {
     }
     y-=16;
   }
-  drawDocumentFigures(figures,{newPage:()=>{newPage();return page;},font,lines,width,height,margin,clean});
+  drawDocumentFigures(figures,{newPage:()=>{newPage();return page;},bookmark,font,lines,width,height,margin,clean});
+  addDocumentOutline(pdf,bookmarks);
   for(const [index,p] of pdf.getPages().entries()) {
     const footer=`${index+1} / ${pdf.getPageCount()}`;
     p.drawText(footer,{x:(width-font.widthOfTextAtSize(footer,8))/2,y:28,font,size:8,color:muted});
